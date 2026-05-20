@@ -1,4 +1,13 @@
-﻿# 🍚 MBG Menu Detector - Flask + Supabase
+﻿---
+title: MBG Menu Detector
+emoji: 🍱
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 8080
+---
+
+# 🍚 MBG Menu Detector - Flask + Supabase
 
 Aplikasi web untuk deteksi kelengkapan menu makanan seimbang (Makanan Bergizi) menggunakan Flask, Supabase, dan webcam browser.
 
