@@ -1,0 +1,6 @@
+flask
+flask-cors
+python-dotenv
+pillow
+# supabase is optional and works best on Python 3.11 or 3.12
+# supabase==2.0.2

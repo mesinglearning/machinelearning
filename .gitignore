@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Python virtual environments
+.venv/
+.venv312/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Runtime logs
+*.log
+server.out.log
+server.err.log
+
+# Local capture output / fallback storage
+static/captures/
+
+# Local OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Empty/accidental root model copy
+/best.pt
+
+# Optional model backups / experiments
+models/*backup*.pt

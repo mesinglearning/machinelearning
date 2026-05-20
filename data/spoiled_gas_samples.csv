@@ -1,0 +1,19 @@
+label,captured_at,temperature,humidity,gas_status,gas_value,source,age_seconds,is_stale
+busuk,2026-05-18T17:15:25,28.6,85,Warming Up,392,supabase,2,False
+busuk,2026-05-18T17:15:36,28.5,85.2,Warming Up,368,supabase,2,False
+busuk,2026-05-18T17:15:46,28.5,85.2,Warming Up,497,supabase,3,False
+busuk,2026-05-18T17:15:57,28.5,85.4,Warming Up,556,supabase,3,False
+busuk,2026-05-18T17:16:07,28.5,85.5,Warming Up,457,supabase,3,False
+busuk,2026-05-18T17:16:17,28.5,85.5,Bahaya Bau Busuk,530,supabase,3,False
+busuk,2026-05-18T17:16:27,28.5,85.6,Waspada Bau Busuk,458,supabase,3,False
+busuk,2026-05-18T17:16:37,28.4,85.7,Waspada Bau Busuk,466,supabase,4,False
+busuk,2026-05-18T17:16:48,28.5,85.8,Waspada Bau Busuk,445,supabase,4,False
+busuk,2026-05-18T17:16:58,28.4,85.8,Normal,416,supabase,4,False
+busuk,2026-05-18T17:17:08,28.4,85.8,Waspada Bau Busuk,482,supabase,5,False
+busuk,2026-05-18T17:17:18,28.4,85.9,Waspada Bau Busuk,434,supabase,5,False
+busuk,2026-05-18T17:17:29,28.4,86,Waspada Bau Busuk,464,supabase,5,False
+busuk,2026-05-18T17:17:39,28.4,86.1,Waspada Bau Busuk,423,supabase,5,False
+busuk,2026-05-18T17:17:49,28.4,86.1,Normal,390,supabase,5,False
+busuk,2026-05-18T17:18:00,28.4,86.1,Bahaya Bau Busuk,551,supabase,6,False
+busuk,2026-05-18T17:18:10,28.3,86.2,Bahaya Bau Busuk,608,supabase,6,False
+busuk,2026-05-18T17:18:20,28.4,86.8,Bahaya Bau Busuk,543,supabase,6,False

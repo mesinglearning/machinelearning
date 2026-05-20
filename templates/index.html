@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MBG Menu Detector - Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="page-accent" aria-hidden="true"></div>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div>
+                    <span class="header-kicker">Webcam + YOLO + ESP32</span>
+                    <h1>MBG Menu Detector</h1>
+                    <p>Deteksi kelengkapan menu dan pantau kualitas lingkungan makanan secara real-time.</p>
+                </div>
+                <div class="header-status">
+                    <span class="status-dot"></span>
+                    <span>Dashboard Aktif</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <section class="overview-grid" aria-label="Ringkasan sistem">
+                <div class="overview-item">
+                    <span class="overview-label">Kamera</span>
+                    <strong id="cameraState">Standby</strong>
+                    <span class="overview-meta">WEB-01 HD720</span>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">Model AI</span>
+                    <strong id="modelState">Siap</strong>
+                    <span class="overview-meta" id="modelMeta">YOLO / Dummy fallback</span>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">Sensor</span>
+                    <strong id="sensorState">Menunggu</strong>
+                    <span class="overview-meta">DHT22 + MQ135</span>
+                </div>
+                <div class="overview-item">
+                    <span class="overview-label">History</span>
+                    <strong id="historyCount">0 data</strong>
+                    <span class="overview-meta">Supabase sync</span>
+                </div>
+            </section>
+            <div id="notification" class="notification hidden" role="status" aria-live="polite"></div>
+            <div class="dashboard-grid">
+                <!-- Webcam Section -->
+                <section class="card webcam-section">
+                    <div class="card-header">
+                        <div>
+                            <span class="section-kicker">Input Visual</span>
+                            <h2>Live Webcam</h2>
+                        </div>
+                        <span class="card-badge">Ready</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="camera-frame">
+                            <video id="webcam" playsinline autoplay muted></video>
+                            <div class="roi-overlay" aria-hidden="true">
+                                <div class="roi-box roi-apple" data-roi-key="apple"><span>Apel</span></div>
+                                <div class="roi-box roi-rice" data-roi-key="rice"><span>Nasi</span></div>
+                                <div class="roi-box roi-broccoli" data-roi-key="broccoli"><span>Brokoli</span></div>
+                                <div class="roi-box roi-chicken" data-roi-key="fried_chicken"><span>Ayam</span></div>
+                            </div>
+                        </div>
+                        <canvas id="canvas" style="display: none;"></canvas>
+                        
+                        <div class="button-group">
+                            <button id="startBtn" class="btn btn-primary">Start Camera</button>
+                            <button id="captureBtn" class="btn btn-success" disabled>Capture & Detect</button>
+                            <button id="stopBtn" class="btn btn-danger" disabled>Stop Camera</button>
+                        </div>
+                        <div class="button-group roi-controls">
+                            <button id="editRoiBtn" class="btn btn-secondary" type="button">Edit ROI</button>
+                            <button id="saveRoiBtn" class="btn btn-success hidden" type="button">Save ROI</button>
+                            <button id="resetRoiBtn" class="btn btn-secondary hidden" type="button">Reset ROI</button>
+                        </div>
+
+                        <div id="loading" class="loading hidden">
+                            <div class="spinner"></div>
+                            <p>Processing...</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Sensor Monitoring Section -->
+                <section class="card sensor-section">
+                    <div class="card-header">
+                        <div>
+                            <span class="section-kicker">Kualitas Udara</span>
+                            <h2>Sensor Monitoring</h2>
+                        </div>
+                        <span class="card-badge">Live</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="sensor-grid">
+                            <div class="sensor-item">
+                                <span class="sensor-label">Temperature</span>
+                                <span class="sensor-value" id="tempValue">--</span>
+                                <span class="sensor-unit">&deg;C</span>
+                            </div>
+                            <div class="sensor-item">
+                                <span class="sensor-label">Humidity</span>
+                                <span class="sensor-value" id="humidValue">--</span>
+                                <span class="sensor-unit">%</span>
+                            </div>
+                            <div class="sensor-item">
+                                <span class="sensor-label">Gas Status</span>
+                                <span class="sensor-value" id="gasValue">Waiting for ESP32</span>
+                            </div>
+                            <div class="sensor-item">
+                                <span class="sensor-label">Gas Value</span>
+                                <span class="sensor-value" id="gasRawValue">--</span>
+                                <span class="sensor-unit">ADC</span>
+                            </div>
+                            <div class="sensor-item">
+                                <span class="sensor-label">Last Update</span>
+                                <span class="sensor-value" id="lastUpdateValue">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Sensor Analytics Section -->
+            <section class="card analytics-section">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Sensor Analytics</span>
+                        <h2>ESP32 Trend Monitoring</h2>
+                    </div>
+                    <span class="card-badge" id="deviceStatusBadge">Checking</span>
+                </div>
+                <div class="card-body">
+                    <div class="device-strip">
+                        <div class="device-card">
+                            <span class="sensor-label">Device</span>
+                            <strong>ESP32-Sensor-01</strong>
+                            <span id="deviceSource">DHT22 + MQ135</span>
+                        </div>
+                        <div class="device-card">
+                            <span class="sensor-label">Status</span>
+                            <strong id="deviceStatusText">Menunggu</strong>
+                            <span id="deviceLastSeen">Last seen --</span>
+                        </div>
+                        <div class="device-card">
+                            <span class="sensor-label">Capture Button</span>
+                            <strong id="captureTriggerState">Standby</strong>
+                            <span>GPIO 27</span>
+                        </div>
+                    </div>
+                    <div class="chart-grid">
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h3>Temperature Trend</h3>
+                                <span>&deg;C</span>
+                            </div>
+                            <svg id="tempChart" class="sensor-chart" viewBox="0 0 360 180" role="img" aria-label="Temperature trend"></svg>
+                        </div>
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h3>Humidity Trend</h3>
+                                <span>%</span>
+                            </div>
+                            <svg id="humidChart" class="sensor-chart" viewBox="0 0 360 180" role="img" aria-label="Humidity trend"></svg>
+                        </div>
+                        <div class="chart-panel">
+                            <div class="chart-header">
+                                <h3>Gas Value Trend</h3>
+                                <span>ADC</span>
+                            </div>
+                            <svg id="gasChart" class="sensor-chart" viewBox="0 0 360 180" role="img" aria-label="Gas value trend"></svg>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Detection Results Section -->
+            <section class="card results-section" id="resultsSection" style="display: none;">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Analisis Menu</span>
+                        <h2>Detection Results</h2>
+                    </div>
+                    <span class="card-badge">Updated</span>
+                </div>
+                <div class="card-body">
+                    <div class="results-grid">
+                        <!-- Captured Image -->
+                        <div class="result-item image-item">
+                            <h3>Captured Image</h3>
+                            <img id="capturedImage" src="" alt="Captured image">
+                            <div class="analysis-summary" id="analysisSummary"></div>
+                        </div>
+
+                        <!-- Detection Items -->
+                        <div class="result-item">
+                            <h3>Menu Quality Detection</h3>
+                            <div class="detection-items" id="detectionItems">
+                                <!-- Items will be populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Menu Status -->
+                    <div class="menu-status" id="menuStatus">
+                        <!-- Status will be populated by JavaScript -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Detection History Section -->
+            <section class="card history-section">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Log Deteksi</span>
+                        <h2>Detection History (Last 5)</h2>
+                    </div>
+                    <span class="card-badge">Latest</span>
+                </div>
+                <div class="card-body">
+                    <div class="history-list" id="historyList">
+                        <p class="no-data">No history yet</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>MBG Menu Detector &copy; 2024 | Powered by Flask + Supabase</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

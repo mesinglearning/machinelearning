@@ -1,0 +1,11 @@
+{
+  "label": "busuk",
+  "samples": 18,
+  "min": 368.0,
+  "p10": 391.4,
+  "p25": 425.75,
+  "average": 471.11,
+  "max": 608.0,
+  "recommended_warning_threshold": 381,
+  "recommended_dangerous_threshold": 540
+}
