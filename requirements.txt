@@ -1,5 +1,6 @@
 flask
 flask-cors
+gunicorn
 python-dotenv
 pillow
 # supabase is optional and works best on Python 3.11 or 3.12

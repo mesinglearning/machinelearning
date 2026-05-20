@@ -1,0 +1,13 @@
+.git
+.env
+.venv
+.venv312
+__pycache__
+*.pyc
+*.pyo
+*.log
+server.out.log
+server.err.log
+static/captures
+models/*backup*.pt
+best.pt
