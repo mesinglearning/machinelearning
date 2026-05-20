@@ -1,4 +1,4 @@
-app = "mbg-menu-detector"
+app = "mbg-menu-detector-mesinglearning"
 primary_region = "sin"
 
 [build]
