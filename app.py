@@ -173,6 +173,7 @@ YOLO_CONFIDENCE_THRESHOLD = 0.18
 YOLO_IMAGE_SIZE = 640
 LOCAL_DETECTION_HISTORY = []
 LOCAL_SENSOR_HISTORY = []
+LAST_YOLO_ERROR = None
 LATEST_SENSOR_DATA = {
     "temperature": None,
     "humidity": None,
@@ -450,10 +451,21 @@ def build_detection_response(detections, model_used):
 def get_model_state():
     """Return lightweight runtime status for the dashboard."""
     model_exists = CUSTOM_MODEL_PATH.exists() and CUSTOM_MODEL_PATH.stat().st_size > 0
+    try:
+        import ultralytics  # noqa: F401
+        yolo_import_available = True
+        yolo_import_error = None
+    except Exception as error:
+        yolo_import_available = False
+        yolo_import_error = str(error)
+
     return {
         "model_available": model_exists,
         "model_path": str(CUSTOM_MODEL_PATH),
         "model_mode": "custom-yolo" if model_exists else "dummy",
+        "yolo_import_available": yolo_import_available,
+        "yolo_import_error": yolo_import_error,
+        "last_yolo_error": LAST_YOLO_ERROR,
         "supabase_configured": has_supabase_config(),
         "menu_items": [
             {
@@ -679,6 +691,8 @@ def detect_menu(image_path, roi_config=None):
     Returns:
         dict: Detection results with detected items and confidence scores
     """
+    global LAST_YOLO_ERROR
+
     try:
         # Verify image exists
         if not Path(image_path).exists():
@@ -691,12 +705,14 @@ def detect_menu(image_path, roi_config=None):
         }
 
         if not CUSTOM_MODEL_PATH.exists():
+            LAST_YOLO_ERROR = f"Model not found: {CUSTOM_MODEL_PATH}"
             print("YOLO model not found, using dummy detection")
             return dummy_detect_menu(image_path)
 
         try:
             from ultralytics import YOLO
         except Exception as import_error:
+            LAST_YOLO_ERROR = f"Import error: {import_error}"
             print(f"YOLO error, fallback to dummy detection: {import_error}")
             return dummy_detect_menu(image_path)
         
@@ -801,9 +817,11 @@ def detect_menu(image_path, roi_config=None):
                             "detected_class": quality_class
                         }
         
+        LAST_YOLO_ERROR = None
         return build_detection_response(detections, "custom-yolo")
     
     except Exception as e:
+        LAST_YOLO_ERROR = f"{type(e).__name__}: {e}"
         print(f"YOLO error, fallback to dummy detection: {e}")
         return dummy_detect_menu(image_path)
 
