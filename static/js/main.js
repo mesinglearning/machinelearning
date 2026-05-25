@@ -11,6 +11,15 @@ class MenuDetector {
         this.stopBtn = document.getElementById('stopBtn');
         this.imageUpload = document.getElementById('imageUpload');
         this.uploadDetectBtn = document.getElementById('uploadDetectBtn');
+        this.cameraFrame = document.querySelector('.camera-frame');
+        this.cameraModeBadge = document.getElementById('cameraModeBadge');
+        this.detectProgress = document.getElementById('detectProgress');
+        this.detectProgressTitle = document.getElementById('detectProgressTitle');
+        this.detectProgressText = document.getElementById('detectProgressText');
+        this.startBtnStatus = document.getElementById('startBtnStatus');
+        this.captureBtnStatus = document.getElementById('captureBtnStatus');
+        this.stopBtnStatus = document.getElementById('stopBtnStatus');
+        this.uploadBtnStatus = document.getElementById('uploadBtnStatus');
         this.loading = document.getElementById('loading');
         this.resultsSection = document.getElementById('resultsSection');
         this.detectionItems = document.getElementById('detectionItems');
@@ -71,7 +80,9 @@ class MenuDetector {
         this.captureBtn.addEventListener('click', () => this.captureAndDetect());
         this.stopBtn.addEventListener('click', () => this.stopCamera());
         this.imageUpload?.addEventListener('change', () => {
-            this.uploadDetectBtn.disabled = !this.imageUpload.files?.length;
+            const hasFile = Boolean(this.imageUpload.files?.length);
+            this.uploadDetectBtn.disabled = !hasFile || this.isDetecting;
+            this.updateSummary(this.uploadBtnStatus, hasFile ? 'Siap dianalisis' : 'Pilih gambar dulu');
         });
         this.uploadDetectBtn?.addEventListener('click', () => this.detectUploadedImage());
     }
@@ -82,8 +93,9 @@ class MenuDetector {
 
     async startCamera() {
         try {
-            this.loading.classList.remove('hidden');
-            this.loading.querySelector('p').textContent = 'Starting camera...';
+            this.setDetectionProgress(true, 'Mengaktifkan kamera...', 'Meminta izin kamera dari browser.');
+            this.startBtn.disabled = true;
+            this.updateSummary(this.startBtnStatus, 'Mengaktifkan...');
 
             const constraints = {
                 video: {
@@ -104,8 +116,13 @@ class MenuDetector {
             this.captureBtn.disabled = false;
             this.stopBtn.disabled = false;
             this.updateSummary(this.cameraState, 'Aktif');
+            this.updateSummary(this.cameraModeBadge, 'Kamera aktif');
+            this.updateSummary(this.startBtnStatus, 'Aktif');
+            this.updateSummary(this.captureBtnStatus, 'Siap capture');
+            this.updateSummary(this.stopBtnStatus, 'Klik untuk berhenti');
+            this.cameraFrame?.classList.add('camera-active');
 
-            this.loading.classList.add('hidden');
+            this.setDetectionProgress(false);
             this.showNotification('Kamera aktif. Menu siap dicapture.', 'success');
         } catch (error) {
             console.error('Error accessing camera:', error);
@@ -113,8 +130,12 @@ class MenuDetector {
             this.startBtn.disabled = false;
             this.captureBtn.disabled = true;
             this.stopBtn.disabled = true;
-            this.loading.classList.add('hidden');
+            this.setDetectionProgress(false);
             this.updateSummary(this.cameraState, 'Error');
+            this.updateSummary(this.cameraModeBadge, 'Kamera error');
+            this.updateSummary(this.startBtnStatus, 'Coba lagi');
+            this.updateSummary(this.captureBtnStatus, 'Kamera belum aktif');
+            this.updateSummary(this.stopBtnStatus, 'Tidak aktif');
             this.showNotification('Kamera tidak bisa diakses. Cek izin browser atau perangkat kamera.', 'error');
         }
     }
@@ -127,6 +148,10 @@ class MenuDetector {
         this.captureBtn.disabled = true;
         this.stopBtn.disabled = true;
         this.updateSummary(this.cameraState, 'Standby');
+        this.updateSummary(this.cameraModeBadge, 'Standby');
+        this.updateSummary(this.startBtnStatus, 'Standby');
+        this.updateSummary(this.captureBtnStatus, 'Aktif setelah kamera menyala');
+        this.updateSummary(this.stopBtnStatus, 'Tidak aktif');
         this.showNotification('Kamera dihentikan.', 'info');
     }
 
@@ -137,6 +162,7 @@ class MenuDetector {
         }
 
         this.video.srcObject = null;
+        this.cameraFrame?.classList.remove('camera-active');
     }
 
     waitForVideoReady() {
@@ -178,8 +204,9 @@ class MenuDetector {
         try {
             this.isDetecting = true;
             this.captureBtn.disabled = true;
-            this.loading.classList.remove('hidden');
-            this.loading.querySelector('p').textContent = 'Capturing...';
+            this.uploadDetectBtn.disabled = true;
+            this.updateSummary(this.captureBtnStatus, 'Mengambil frame...');
+            this.setDetectionProgress(true, 'Mengambil gambar...', 'Frame kamera sedang disiapkan untuk YOLO.');
 
             // Capture frame from video
             const ctx = this.canvas.getContext('2d');
@@ -191,19 +218,21 @@ class MenuDetector {
             const blob = await this.canvasToBlob(this.canvas, 'image/jpeg', 0.9);
 
             // Send to Flask backend
-            await this.sendImageForDetection(blob, 'capture.jpg');
+            await this.sendImageForDetection(blob, 'capture.jpg', 'Menganalisis capture...', 'YOLO membaca menu lalu sistem menggabungkan data sensor.');
 
-            this.loading.classList.add('hidden');
+            this.setDetectionProgress(false);
         } catch (error) {
             console.error('Error during capture:', error);
             this.updateSummary(this.modelState, 'Error');
             this.showNotification('Capture error: ' + error.message, 'error');
-            this.loading.classList.add('hidden');
+            this.setDetectionProgress(false);
         } finally {
             this.isDetecting = false;
             if (this.mediaStream) {
                 this.captureBtn.disabled = false;
+                this.updateSummary(this.captureBtnStatus, 'Siap capture lagi');
             }
+            this.uploadDetectBtn.disabled = !this.imageUpload?.files?.length;
         }
     }
 
@@ -221,22 +250,28 @@ class MenuDetector {
         try {
             this.isDetecting = true;
             this.uploadDetectBtn.disabled = true;
-            this.loading.classList.remove('hidden');
-            this.loading.querySelector('p').textContent = 'Processing uploaded image...';
-            await this.sendImageForDetection(file, file.name || 'uploaded-menu.jpg');
+            this.captureBtn.disabled = true;
+            this.updateSummary(this.uploadBtnStatus, 'Mengunggah...');
+            this.setDetectionProgress(true, 'Menganalisis upload...', 'Gambar menu sedang dikirim ke model deteksi.');
+            await this.sendImageForDetection(file, file.name || 'uploaded-menu.jpg', 'Menganalisis upload...', 'YOLO membaca gambar penuh tanpa ROI manual.');
         } catch (error) {
             console.error('Error detecting uploaded image:', error);
             this.updateSummary(this.modelState, 'Error');
             this.showNotification('Upload detection error: ' + error.message, 'error');
-            this.loading.classList.add('hidden');
+            this.setDetectionProgress(false);
         } finally {
             this.isDetecting = false;
             this.uploadDetectBtn.disabled = !this.imageUpload?.files?.length;
+            this.captureBtn.disabled = !this.mediaStream;
+            this.updateSummary(this.uploadBtnStatus, this.imageUpload?.files?.length ? 'Siap dianalisis lagi' : 'Pilih gambar dulu');
+            if (this.mediaStream) {
+                this.updateSummary(this.captureBtnStatus, 'Siap capture');
+            }
         }
     }
 
-    async sendImageForDetection(imageBlob, filename) {
-        this.loading.querySelector('p').textContent = 'Processing...';
+    async sendImageForDetection(imageBlob, filename, title = 'Memproses gambar...', text = 'Menjalankan deteksi dan prediksi kesegaran.') {
+        this.setDetectionProgress(true, title, text);
         const formData = new FormData();
         formData.append('image', imageBlob, filename);
 
@@ -251,12 +286,23 @@ class MenuDetector {
             this.displayResults(result);
             this.loadDetectionHistory();
             this.updateModelMode(result.model_used);
+            this.updateSummary(this.uploadBtnStatus, this.imageUpload?.files?.length ? 'Hasil sudah diperbarui' : 'Pilih gambar dulu');
+            this.updateSummary(this.captureBtnStatus, this.mediaStream ? 'Hasil sudah diperbarui' : 'Aktif setelah kamera menyala');
             this.showNotification('Deteksi selesai. Hasil analisis sudah diperbarui.', 'success');
         } else {
             this.showNotification('Detection failed: ' + result.message, 'error');
         }
 
-        this.loading.classList.add('hidden');
+        this.setDetectionProgress(false);
+    }
+
+    setDetectionProgress(isVisible, title = '', text = '') {
+        if (!this.detectProgress) return;
+
+        this.detectProgress.classList.toggle('hidden', !isVisible);
+        this.loading?.classList.add('hidden');
+        if (title) this.updateSummary(this.detectProgressTitle, title);
+        if (text) this.updateSummary(this.detectProgressText, text);
     }
 
     canvasToBlob(canvas, type = 'image/jpeg', quality = 0.9) {

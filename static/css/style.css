@@ -243,6 +243,62 @@ body {
     color: #991b1b;
 }
 
+.onboarding-card {
+    background: #ffffff;
+    border: 1px solid rgba(37, 99, 235, 0.18);
+    border-left: 5px solid var(--primary-color);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 1.15rem;
+    display: grid;
+    grid-template-columns: minmax(14rem, 0.8fr) minmax(0, 1.6fr);
+    gap: 1rem;
+    align-items: center;
+}
+
+.onboarding-copy h2 {
+    font-size: 1.18rem;
+    line-height: 1.25;
+    margin-top: 0.2rem;
+}
+
+.onboarding-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.onboarding-step {
+    min-height: 92px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-soft);
+    padding: 0.8rem;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.65rem;
+    align-items: start;
+}
+
+.onboarding-step strong {
+    width: 1.75rem;
+    height: 1.75rem;
+    border-radius: 999px;
+    background: #dbeafe;
+    color: #1d4ed8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+}
+
+.onboarding-step span {
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1.35;
+}
+
 /* ============================================================================
    Cards & Sections
    ============================================================================ */
@@ -293,8 +349,18 @@ body {
 
 .dashboard-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1.35fr) minmax(20rem, 0.65fr);
     gap: 1.5rem;
+}
+
+.webcam-section {
+    border-color: rgba(37, 99, 235, 0.32);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 18px 42px rgba(37, 99, 235, 0.12);
+}
+
+.webcam-section .card-header,
+.priority-section .card-header {
+    background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
 }
 
 /* ============================================================================
@@ -324,6 +390,86 @@ body {
     object-fit: cover;
     border: 1px solid #0f172a;
     display: block;
+}
+
+.camera-placeholder {
+    position: absolute;
+    inset: 0.45rem;
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.9), rgba(30, 41, 59, 0.82));
+    color: #ffffff;
+    display: grid;
+    place-content: center;
+    gap: 0.4rem;
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.camera-placeholder strong {
+    font-size: 1.2rem;
+    line-height: 1.2;
+}
+
+.camera-placeholder span {
+    color: rgba(255, 255, 255, 0.78);
+    font-weight: 700;
+    max-width: 34rem;
+}
+
+.camera-frame.camera-active .camera-placeholder {
+    display: none;
+}
+
+.detect-progress {
+    position: absolute;
+    inset: 0.45rem;
+    z-index: 3;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.82);
+    backdrop-filter: blur(4px);
+    color: #ffffff;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 0.75rem;
+    text-align: center;
+    padding: 1.5rem;
+}
+
+.detect-progress .spinner {
+    border-color: rgba(255, 255, 255, 0.28);
+    border-top-color: #ffffff;
+}
+
+.detect-progress strong {
+    font-size: 1.08rem;
+    line-height: 1.2;
+}
+
+.detect-progress span {
+    color: rgba(255, 255, 255, 0.82);
+    font-weight: 700;
+}
+
+.progress-track {
+    width: min(18rem, 78vw);
+    height: 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    overflow: hidden;
+}
+
+.progress-bar {
+    width: 42%;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #22c55e);
+    animation: progressPulse 1.25s ease-in-out infinite;
+}
+
+@keyframes progressPulse {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(260%); }
 }
 
 .button-group {
@@ -372,6 +518,30 @@ body {
     flex: 1;
     min-width: 120px;
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.28) inset;
+}
+
+.btn-command {
+    min-height: 4.1rem;
+    text-align: left;
+    display: grid;
+    align-content: center;
+    gap: 0.15rem;
+}
+
+.btn-command strong,
+.btn-command span {
+    display: block;
+}
+
+.btn-command strong {
+    font-size: 0.98rem;
+    line-height: 1.2;
+}
+
+.btn-command span {
+    font-size: 0.78rem;
+    font-weight: 800;
+    opacity: 0.86;
 }
 
 .btn-primary {
@@ -531,7 +701,7 @@ body {
     border-left: 4px solid var(--primary-color);
     border-radius: 8px;
     background: #ffffff;
-    padding: 0.9rem;
+    padding: 1rem;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.6rem 1rem;
@@ -551,8 +721,20 @@ body {
 
 .freshness-item-score {
     color: var(--primary-color);
-    font-size: 1.45rem;
+    font-size: 2rem;
     font-weight: 900;
+    min-width: 4.25rem;
+    text-align: right;
+}
+
+.freshness-item-score::before {
+    content: "Score";
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1.1;
+    text-transform: uppercase;
 }
 
 .freshness-detail-grid {
@@ -591,6 +773,26 @@ body {
     border: 1px solid var(--border-color);
     border-radius: 999px;
     padding: 0.3rem 0.55rem;
+}
+
+.freshness-item-safe .freshness-detail-grid span,
+.freshness-item-safe .freshness-breakdown span {
+    border-color: rgba(16, 185, 129, 0.2);
+}
+
+.freshness-item-warning .freshness-detail-grid span,
+.freshness-item-warning .freshness-breakdown span {
+    border-color: rgba(245, 158, 11, 0.24);
+}
+
+.freshness-item-urgent .freshness-detail-grid span,
+.freshness-item-urgent .freshness-breakdown span {
+    border-color: rgba(249, 115, 22, 0.24);
+}
+
+.freshness-item-danger .freshness-detail-grid span,
+.freshness-item-danger .freshness-breakdown span {
+    border-color: rgba(239, 68, 68, 0.24);
 }
 
 .freshness-item-safe {
@@ -915,6 +1117,11 @@ body {
     margin-bottom: 1.25rem;
 }
 
+.priority-section {
+    border-color: rgba(8, 145, 178, 0.28);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08), 0 16px 38px rgba(8, 145, 178, 0.1);
+}
+
 .result-item h3 {
     margin-bottom: 0.85rem;
     color: var(--text-primary);
@@ -1143,6 +1350,11 @@ body {
 
     .overview-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .onboarding-card,
+    .onboarding-steps {
+        grid-template-columns: 1fr;
     }
 
     .dashboard-grid {

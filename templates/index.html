@@ -26,6 +26,27 @@
 
         <!-- Main Content -->
         <main class="main-content">
+            <section class="onboarding-card" aria-label="Panduan penggunaan pertama kali">
+                <div class="onboarding-copy">
+                    <span class="section-kicker">Mulai dari sini</span>
+                    <h2>Panduan cepat penggunaan dashboard</h2>
+                </div>
+                <div class="onboarding-steps">
+                    <div class="onboarding-step">
+                        <strong>1</strong>
+                        <span>Pilih sumber gambar: upload foto menu atau aktifkan kamera.</span>
+                    </div>
+                    <div class="onboarding-step">
+                        <strong>2</strong>
+                        <span>Jalankan deteksi agar YOLO membaca menu makanan.</span>
+                    </div>
+                    <div class="onboarding-step">
+                        <strong>3</strong>
+                        <span>Baca hasil kelayakan yang digabung dengan sensor ESP32.</span>
+                    </div>
+                </div>
+            </section>
+
             <section class="overview-grid" aria-label="Ringkasan sistem">
                 <div class="overview-item">
                     <span class="overview-label">Kamera</span>
@@ -57,11 +78,23 @@
                             <span class="section-kicker">Input Visual</span>
                             <h2>Live Webcam</h2>
                         </div>
-                        <span class="card-badge">Ready</span>
+                        <span class="card-badge" id="cameraModeBadge">Standby</span>
                     </div>
                     <div class="card-body">
                         <div class="camera-frame">
                             <video id="webcam" playsinline autoplay muted></video>
+                            <div class="camera-placeholder" id="cameraPlaceholder">
+                                <strong>Belum ada kamera aktif</strong>
+                                <span>Gunakan upload gambar untuk uji coba tanpa makanan fisik, atau mulai kamera untuk capture langsung.</span>
+                            </div>
+                            <div class="detect-progress hidden" id="detectProgress">
+                                <div class="spinner"></div>
+                                <strong id="detectProgressTitle">Memproses gambar...</strong>
+                                <span id="detectProgressText">Menyiapkan analisis menu dan sensor.</span>
+                                <div class="progress-track">
+                                    <div class="progress-bar"></div>
+                                </div>
+                            </div>
                         </div>
                         <canvas id="canvas" style="display: none;"></canvas>
 
@@ -70,13 +103,25 @@
                                 <span>Upload Gambar Menu</span>
                                 <input id="imageUpload" type="file" accept="image/*">
                             </label>
-                            <button id="uploadDetectBtn" class="btn btn-primary" type="button" disabled>Detect Upload</button>
+                            <button id="uploadDetectBtn" class="btn btn-primary btn-command" type="button" disabled>
+                                <strong>Detect Upload</strong>
+                                <span id="uploadBtnStatus">Pilih gambar dulu</span>
+                            </button>
                         </div>
                         
                         <div class="button-group">
-                            <button id="startBtn" class="btn btn-primary">Start Camera</button>
-                            <button id="captureBtn" class="btn btn-success" disabled>Capture & Detect</button>
-                            <button id="stopBtn" class="btn btn-danger" disabled>Stop Camera</button>
+                            <button id="startBtn" class="btn btn-primary btn-command">
+                                <strong>Start Camera</strong>
+                                <span id="startBtnStatus">Standby</span>
+                            </button>
+                            <button id="captureBtn" class="btn btn-success btn-command" disabled>
+                                <strong>Capture & Detect</strong>
+                                <span id="captureBtnStatus">Aktif setelah kamera menyala</span>
+                            </button>
+                            <button id="stopBtn" class="btn btn-danger btn-command" disabled>
+                                <strong>Stop Camera</strong>
+                                <span id="stopBtnStatus">Tidak aktif</span>
+                            </button>
                         </div>
 
                         <div id="loading" class="loading hidden">
@@ -124,6 +169,58 @@
                     </div>
                 </section>
             </div>
+
+            <!-- Detection Results Section -->
+            <section class="card results-section priority-section" id="resultsSection" style="display: none;">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Analisis Menu</span>
+                        <h2>Detection Results</h2>
+                    </div>
+                    <span class="card-badge">Updated</span>
+                </div>
+                <div class="card-body">
+                    <div class="results-grid">
+                        <!-- Captured Image -->
+                        <div class="result-item image-item">
+                            <h3>Captured Image</h3>
+                            <img id="capturedImage" src="" alt="Captured image">
+                            <div class="analysis-summary" id="analysisSummary"></div>
+                        </div>
+
+                        <!-- Detection Items -->
+                        <div class="result-item">
+                            <h3>Menu Quality Detection</h3>
+                            <div class="detection-items" id="detectionItems">
+                                <!-- Items will be populated by JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Menu Status -->
+                    <div class="menu-status" id="menuStatus">
+                        <!-- Status will be populated by JavaScript -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Automatic Freshness Prediction Section -->
+            <section class="card freshness-section">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Prediksi Otomatis</span>
+                        <h2>Tingkat Kesegaran Makanan</h2>
+                    </div>
+                    <span class="card-badge">YOLO + IoT</span>
+                </div>
+                <div class="card-body">
+                    <div class="freshness-panel" id="freshnessPanel">
+                        <div class="freshness-items" id="freshnessItems">
+                            <p class="no-data">Upload gambar menu atau gunakan webcam. Sistem akan mengambil menu dari gambar dan data terbaru dari ESP32 secara otomatis.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             <!-- Sensor Analytics Section -->
             <section class="card analytics-section">
@@ -178,58 +275,6 @@
                 </div>
             </section>
 
-            <!-- Automatic Freshness Prediction Section -->
-            <section class="card freshness-section">
-                <div class="card-header">
-                    <div>
-                        <span class="section-kicker">Prediksi Otomatis</span>
-                        <h2>Tingkat Kesegaran Makanan</h2>
-                    </div>
-                    <span class="card-badge">YOLO + IoT</span>
-                </div>
-                <div class="card-body">
-                    <div class="freshness-panel" id="freshnessPanel">
-                        <div class="freshness-items" id="freshnessItems">
-                            <p class="no-data">Upload gambar menu atau gunakan webcam. Sistem akan mengambil menu dari gambar dan data terbaru dari ESP32 secara otomatis.</p>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Detection Results Section -->
-            <section class="card results-section" id="resultsSection" style="display: none;">
-                <div class="card-header">
-                    <div>
-                        <span class="section-kicker">Analisis Menu</span>
-                        <h2>Detection Results</h2>
-                    </div>
-                    <span class="card-badge">Updated</span>
-                </div>
-                <div class="card-body">
-                    <div class="results-grid">
-                        <!-- Captured Image -->
-                        <div class="result-item image-item">
-                            <h3>Captured Image</h3>
-                            <img id="capturedImage" src="" alt="Captured image">
-                            <div class="analysis-summary" id="analysisSummary"></div>
-                        </div>
-
-                        <!-- Detection Items -->
-                        <div class="result-item">
-                            <h3>Menu Quality Detection</h3>
-                            <div class="detection-items" id="detectionItems">
-                                <!-- Items will be populated by JavaScript -->
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Menu Status -->
-                    <div class="menu-status" id="menuStatus">
-                        <!-- Status will be populated by JavaScript -->
-                    </div>
-                </div>
-            </section>
-
             <!-- Detection History Section -->
             <section class="card history-section">
                 <div class="card-header">
@@ -249,7 +294,7 @@
 
         <!-- Footer -->
         <footer class="footer">
-            <p>MBG Menu Detector &copy; 2024 | Powered by Flask + Supabase</p>
+            <p>MBG Menu Detector &copy; 2026 | Powered by Flask + Supabase</p>
         </footer>
     </div>
 
