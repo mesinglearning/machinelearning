@@ -62,24 +62,21 @@
                     <div class="card-body">
                         <div class="camera-frame">
                             <video id="webcam" playsinline autoplay muted></video>
-                            <div class="roi-overlay" aria-hidden="true">
-                                <div class="roi-box roi-apple" data-roi-key="apple"><span>Apel</span></div>
-                                <div class="roi-box roi-rice" data-roi-key="rice"><span>Nasi</span></div>
-                                <div class="roi-box roi-broccoli" data-roi-key="broccoli"><span>Brokoli</span></div>
-                                <div class="roi-box roi-chicken" data-roi-key="fried_chicken"><span>Ayam</span></div>
-                            </div>
                         </div>
                         <canvas id="canvas" style="display: none;"></canvas>
+
+                        <div class="upload-panel">
+                            <label class="upload-field" for="imageUpload">
+                                <span>Upload Gambar Menu</span>
+                                <input id="imageUpload" type="file" accept="image/*">
+                            </label>
+                            <button id="uploadDetectBtn" class="btn btn-primary" type="button" disabled>Detect Upload</button>
+                        </div>
                         
                         <div class="button-group">
                             <button id="startBtn" class="btn btn-primary">Start Camera</button>
                             <button id="captureBtn" class="btn btn-success" disabled>Capture & Detect</button>
                             <button id="stopBtn" class="btn btn-danger" disabled>Stop Camera</button>
-                        </div>
-                        <div class="button-group roi-controls">
-                            <button id="editRoiBtn" class="btn btn-secondary" type="button">Edit ROI</button>
-                            <button id="saveRoiBtn" class="btn btn-success hidden" type="button">Save ROI</button>
-                            <button id="resetRoiBtn" class="btn btn-secondary hidden" type="button">Reset ROI</button>
                         </div>
 
                         <div id="loading" class="loading hidden">
@@ -176,6 +173,24 @@
                                 <span>ADC</span>
                             </div>
                             <svg id="gasChart" class="sensor-chart" viewBox="0 0 360 180" role="img" aria-label="Gas value trend"></svg>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Automatic Freshness Prediction Section -->
+            <section class="card freshness-section">
+                <div class="card-header">
+                    <div>
+                        <span class="section-kicker">Prediksi Otomatis</span>
+                        <h2>Tingkat Kesegaran Makanan</h2>
+                    </div>
+                    <span class="card-badge">YOLO + IoT</span>
+                </div>
+                <div class="card-body">
+                    <div class="freshness-panel" id="freshnessPanel">
+                        <div class="freshness-items" id="freshnessItems">
+                            <p class="no-data">Upload gambar menu atau gunakan webcam. Sistem akan mengambil menu dari gambar dan data terbaru dari ESP32 secara otomatis.</p>
                         </div>
                     </div>
                 </div>

@@ -9,9 +9,8 @@ class MenuDetector {
         this.startBtn = document.getElementById('startBtn');
         this.captureBtn = document.getElementById('captureBtn');
         this.stopBtn = document.getElementById('stopBtn');
-        this.editRoiBtn = document.getElementById('editRoiBtn');
-        this.saveRoiBtn = document.getElementById('saveRoiBtn');
-        this.resetRoiBtn = document.getElementById('resetRoiBtn');
+        this.imageUpload = document.getElementById('imageUpload');
+        this.uploadDetectBtn = document.getElementById('uploadDetectBtn');
         this.loading = document.getElementById('loading');
         this.resultsSection = document.getElementById('resultsSection');
         this.detectionItems = document.getElementById('detectionItems');
@@ -33,30 +32,18 @@ class MenuDetector {
         this.tempChart = document.getElementById('tempChart');
         this.humidChart = document.getElementById('humidChart');
         this.gasChart = document.getElementById('gasChart');
-        this.roiOverlay = document.querySelector('.roi-overlay');
-        this.roiBoxes = document.querySelectorAll('[data-roi-key]');
+        this.freshnessPanel = document.getElementById('freshnessPanel');
+        this.freshnessItems = document.getElementById('freshnessItems');
 
         this.mediaStream = null;
         this.menuKeys = ['rice', 'fried_chicken', 'apple', 'broccoli'];
-        this.defaultRoiConfig = {
-            apple: { left: 14, top: 8, width: 30, height: 34 },
-            rice: { left: 30, top: 8, width: 26, height: 35 },
-            broccoli: { left: 14, top: 43, width: 34, height: 43 },
-            fried_chicken: { left: 35, top: 42, width: 30, height: 48 }
-        };
-        this.roiConfig = this.loadRoiConfig();
-        this.isEditingRoi = false;
-        this.activeRoiDrag = null;
         this.lastCaptureRequestId = null;
         this.captureRequestReady = false;
         this.isDetecting = false;
         this.notificationTimer = null;
         this.sensorStaleNotified = false;
-        this.liveRoiScanTimer = null;
-        this.isLiveRoiScanning = false;
-
-        this.applyRoiConfig();
-        this.updateRoiOverlay(this.menuKeys);
+        this.lastDetections = null;
+        this.lastFreshnessSensorAt = null;
 
         this.initEventListeners();
         this.loadAppStatus();
@@ -83,14 +70,10 @@ class MenuDetector {
         this.startBtn.addEventListener('click', () => this.startCamera());
         this.captureBtn.addEventListener('click', () => this.captureAndDetect());
         this.stopBtn.addEventListener('click', () => this.stopCamera());
-        this.editRoiBtn.addEventListener('click', () => this.enableRoiEditing());
-        this.saveRoiBtn.addEventListener('click', () => this.saveRoiEditing());
-        this.resetRoiBtn.addEventListener('click', () => this.resetRoiConfig());
-        this.roiBoxes.forEach(box => {
-            box.addEventListener('pointerdown', event => this.startRoiPointer(event, box));
+        this.imageUpload?.addEventListener('change', () => {
+            this.uploadDetectBtn.disabled = !this.imageUpload.files?.length;
         });
-        window.addEventListener('pointermove', event => this.moveRoiPointer(event));
-        window.addEventListener('pointerup', () => this.stopRoiPointer());
+        this.uploadDetectBtn?.addEventListener('click', () => this.detectUploadedImage());
     }
 
     // ========================================================================
@@ -121,8 +104,6 @@ class MenuDetector {
             this.captureBtn.disabled = false;
             this.stopBtn.disabled = false;
             this.updateSummary(this.cameraState, 'Aktif');
-            this.updateRoiOverlay(this.menuKeys);
-            this.startLiveRoiScan();
 
             this.loading.classList.add('hidden');
             this.showNotification('Kamera aktif. Menu siap dicapture.', 'success');
@@ -156,8 +137,6 @@ class MenuDetector {
         }
 
         this.video.srcObject = null;
-        this.updateRoiOverlay([]);
-        this.stopLiveRoiScan();
     }
 
     waitForVideoReady() {
@@ -212,26 +191,7 @@ class MenuDetector {
             const blob = await this.canvasToBlob(this.canvas, 'image/jpeg', 0.9);
 
             // Send to Flask backend
-            this.loading.querySelector('p').textContent = 'Processing...';
-            const formData = new FormData();
-            formData.append('image', blob, 'capture.jpg');
-            formData.append('roi_config', JSON.stringify(this.roiConfig));
-
-            const response = await fetch('/api/detect', {
-                method: 'POST',
-                body: formData
-            });
-
-            const result = await response.json();
-
-            if (result.status === 'success') {
-                this.displayResults(result);
-                this.loadDetectionHistory();
-                this.updateModelMode(result.model_used);
-                this.showNotification('Deteksi selesai. Hasil analisis sudah diperbarui.', 'success');
-            } else {
-                this.showNotification('Detection failed: ' + result.message, 'error');
-            }
+            await this.sendImageForDetection(blob, 'capture.jpg');
 
             this.loading.classList.add('hidden');
         } catch (error) {
@@ -247,173 +207,66 @@ class MenuDetector {
         }
     }
 
+    async detectUploadedImage() {
+        const file = this.imageUpload?.files?.[0];
+        if (!file) {
+            this.showNotification('Pilih gambar menu terlebih dahulu.', 'warning');
+            return;
+        }
+
+        if (this.isDetecting) {
+            return;
+        }
+
+        try {
+            this.isDetecting = true;
+            this.uploadDetectBtn.disabled = true;
+            this.loading.classList.remove('hidden');
+            this.loading.querySelector('p').textContent = 'Processing uploaded image...';
+            await this.sendImageForDetection(file, file.name || 'uploaded-menu.jpg');
+        } catch (error) {
+            console.error('Error detecting uploaded image:', error);
+            this.updateSummary(this.modelState, 'Error');
+            this.showNotification('Upload detection error: ' + error.message, 'error');
+            this.loading.classList.add('hidden');
+        } finally {
+            this.isDetecting = false;
+            this.uploadDetectBtn.disabled = !this.imageUpload?.files?.length;
+        }
+    }
+
+    async sendImageForDetection(imageBlob, filename) {
+        this.loading.querySelector('p').textContent = 'Processing...';
+        const formData = new FormData();
+        formData.append('image', imageBlob, filename);
+
+        const response = await fetch('/api/detect', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.status === 'success') {
+            this.displayResults(result);
+            this.loadDetectionHistory();
+            this.updateModelMode(result.model_used);
+            this.showNotification('Deteksi selesai. Hasil analisis sudah diperbarui.', 'success');
+        } else {
+            this.showNotification('Detection failed: ' + result.message, 'error');
+        }
+
+        this.loading.classList.add('hidden');
+    }
+
     canvasToBlob(canvas, type = 'image/jpeg', quality = 0.9) {
         return new Promise(resolve => {
             canvas.toBlob(resolve, type, quality);
         });
     }
 
-    loadRoiConfig() {
-        try {
-            const savedConfig = JSON.parse(localStorage.getItem('mbg_roi_config') || '{}');
-            return { ...this.defaultRoiConfig, ...savedConfig };
-        } catch (error) {
-            console.error('Error loading ROI config:', error);
-            return { ...this.defaultRoiConfig };
-        }
-    }
-
-    applyRoiConfig() {
-        this.roiBoxes.forEach(box => {
-            const key = box.dataset.roiKey;
-            const roi = this.roiConfig[key];
-            if (!roi) return;
-
-            box.style.left = `${roi.left}%`;
-            box.style.top = `${roi.top}%`;
-            box.style.width = `${roi.width}%`;
-            box.style.height = `${roi.height}%`;
-        });
-    }
-
-    enableRoiEditing() {
-        this.isEditingRoi = true;
-        this.stopLiveRoiScan();
-        this.roiOverlay.classList.add('roi-editing');
-        this.updateRoiOverlay(this.menuKeys);
-        this.editRoiBtn.classList.add('hidden');
-        this.saveRoiBtn.classList.remove('hidden');
-        this.resetRoiBtn.classList.remove('hidden');
-        this.showNotification('Mode edit ROI aktif. Geser kotak, tarik sudut kanan bawah untuk ubah ukuran.', 'info', 7000);
-    }
-
-    saveRoiEditing() {
-        this.isEditingRoi = false;
-        this.roiOverlay.classList.remove('roi-editing');
-        localStorage.setItem('mbg_roi_config', JSON.stringify(this.roiConfig));
-        this.editRoiBtn.classList.remove('hidden');
-        this.saveRoiBtn.classList.add('hidden');
-        this.resetRoiBtn.classList.add('hidden');
-        this.updateRoiOverlay(this.menuKeys);
-        if (this.mediaStream) {
-            this.startLiveRoiScan();
-        }
-        this.showNotification('ROI tersimpan dan akan dipakai saat deteksi.', 'success');
-    }
-
-    resetRoiConfig() {
-        this.roiConfig = { ...this.defaultRoiConfig };
-        localStorage.removeItem('mbg_roi_config');
-        this.applyRoiConfig();
-        this.updateRoiOverlay(this.menuKeys);
-        this.showNotification('ROI dikembalikan ke posisi default.', 'info');
-    }
-
-    startRoiPointer(event, box) {
-        if (!this.isEditingRoi) return;
-        event.preventDefault();
-
-        const overlayRect = this.roiOverlay.getBoundingClientRect();
-        const boxRect = box.getBoundingClientRect();
-        const isResize = event.offsetX >= box.clientWidth - 18 && event.offsetY >= box.clientHeight - 18;
-
-        this.activeRoiDrag = {
-            key: box.dataset.roiKey,
-            mode: isResize ? 'resize' : 'move',
-            startX: event.clientX,
-            startY: event.clientY,
-            overlayWidth: overlayRect.width,
-            overlayHeight: overlayRect.height,
-            startLeft: ((boxRect.left - overlayRect.left) / overlayRect.width) * 100,
-            startTop: ((boxRect.top - overlayRect.top) / overlayRect.height) * 100,
-            startWidth: (boxRect.width / overlayRect.width) * 100,
-            startHeight: (boxRect.height / overlayRect.height) * 100
-        };
-    }
-
-    moveRoiPointer(event) {
-        if (!this.activeRoiDrag) return;
-
-        const drag = this.activeRoiDrag;
-        const dx = ((event.clientX - drag.startX) / drag.overlayWidth) * 100;
-        const dy = ((event.clientY - drag.startY) / drag.overlayHeight) * 100;
-        const roi = { ...this.roiConfig[drag.key] };
-
-        if (drag.mode === 'resize') {
-            roi.width = this.clamp(drag.startWidth + dx, 10, 70);
-            roi.height = this.clamp(drag.startHeight + dy, 10, 70);
-        } else {
-            roi.left = this.clamp(drag.startLeft + dx, 0, 100 - roi.width);
-            roi.top = this.clamp(drag.startTop + dy, 0, 100 - roi.height);
-        }
-
-        roi.width = this.clamp(roi.width, 10, 100 - roi.left);
-        roi.height = this.clamp(roi.height, 10, 100 - roi.top);
-        this.roiConfig[drag.key] = roi;
-        this.applyRoiConfig();
-    }
-
-    stopRoiPointer() {
-        this.activeRoiDrag = null;
-    }
-
     clamp(value, min, max) {
         return Math.min(Math.max(value, min), max);
-    }
-
-    startLiveRoiScan() {
-        this.stopLiveRoiScan();
-        this.scanLiveRoi();
-        this.liveRoiScanTimer = window.setInterval(() => this.scanLiveRoi(), 4000);
-    }
-
-    stopLiveRoiScan() {
-        if (this.liveRoiScanTimer) {
-            window.clearInterval(this.liveRoiScanTimer);
-            this.liveRoiScanTimer = null;
-        }
-        this.isLiveRoiScanning = false;
-    }
-
-    async scanLiveRoi() {
-        if (
-            this.isLiveRoiScanning ||
-            this.isDetecting ||
-            !this.mediaStream ||
-            this.video.readyState < 2 ||
-            !this.video.videoWidth ||
-            !this.video.videoHeight
-        ) {
-            return;
-        }
-
-        try {
-            this.isLiveRoiScanning = true;
-            const ctx = this.canvas.getContext('2d');
-            this.canvas.width = this.video.videoWidth;
-            this.canvas.height = this.video.videoHeight;
-            ctx.drawImage(this.video, 0, 0);
-
-            const blob = await this.canvasToBlob(this.canvas, 'image/jpeg', 0.72);
-            const formData = new FormData();
-            formData.append('image', blob, 'preview.jpg');
-            formData.append('roi_config', JSON.stringify(this.roiConfig));
-
-            const response = await fetch('/api/preview-detect', {
-                method: 'POST',
-                body: formData
-            });
-            const result = await response.json();
-
-            if (result.status === 'success') {
-                const visibleKeys = this.getVisibleRoiKeys(result.detections || {});
-                this.updateRoiOverlay(visibleKeys);
-            }
-        } catch (error) {
-            console.error('Error scanning live ROI:', error);
-        } finally {
-            this.isLiveRoiScanning = false;
-        }
     }
 
     // ========================================================================
@@ -426,8 +279,10 @@ class MenuDetector {
 
         // Display captured image
         this.capturedImage.src = result.image_url;
+        this.lastDetections = result.detections || null;
+        this.lastFreshnessSensorAt = result.freshness_prediction?.sensor?.created_at || null;
         this.renderAnalysisSummary(result);
-        this.updateRoiOverlay(this.getVisibleRoiKeys(result.detections || {}));
+        this.renderFreshnessPrediction(result.freshness_prediction);
 
         // Display detection items
         this.detectionItems.innerHTML = '';
@@ -476,16 +331,89 @@ class MenuDetector {
         this.resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    getVisibleRoiKeys(detections) {
-        return this.menuKeys.filter(key => detections[key]?.detected);
+    async refreshFreshnessPrediction() {
+        if (!this.lastDetections) return;
+
+        try {
+            const response = await fetch('/api/freshness-prediction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ detections: this.lastDetections })
+            });
+            const result = await response.json();
+            if (result.status === 'success') {
+                this.renderFreshnessPrediction(result.freshness_prediction);
+            }
+        } catch (error) {
+            console.error('Error refreshing freshness prediction:', error);
+        }
     }
 
-    updateRoiOverlay(visibleKeys) {
-        const visibleSet = new Set(visibleKeys || []);
-        this.roiBoxes.forEach(box => {
-            const key = box.dataset.roiKey;
-            box.classList.toggle('roi-visible', visibleSet.has(key));
-        });
+    renderFreshnessPrediction(prediction) {
+        if (!this.freshnessPanel) return;
+
+        if (!prediction || !prediction.overall) {
+            this.freshnessPanel.className = 'freshness-panel';
+            this.freshnessItems.innerHTML = prediction?.items?.length
+                ? prediction.items.map(item => `
+                    <div class="freshness-item freshness-item-waiting">
+                        <div>
+                            <strong>${this.escapeHtml(item.name)}</strong>
+                            <span>${this.escapeHtml(item.time_message || item.status)}</span>
+                        </div>
+                        <div class="freshness-item-score">--</div>
+                        <div class="freshness-detail-grid">
+                            <span>Kelayakan: <strong>Menunggu sensor</strong></span>
+                            <span>Menuju tidak layak: <strong>--</strong></span>
+                            <span>Sensor: <strong>${this.escapeHtml(prediction?.sensor?.connection_status || 'Menunggu ESP32')}</strong></span>
+                        </div>
+                        <div class="freshness-breakdown">
+                            <span>Suhu --</span>
+                            <span>RH --</span>
+                            <span>Gas --</span>
+                        </div>
+                    </div>
+                `).join('')
+                : '<p class="no-data">Belum ada menu yang bisa dihitung.</p>';
+            return;
+        }
+
+        const overall = prediction.overall;
+        const level = overall.level || 'warning';
+        this.freshnessPanel.className = `freshness-panel freshness-${level}`;
+
+        this.freshnessItems.innerHTML = (prediction.items || []).map(item => {
+            const scores = item.component_scores || {};
+            const tempScore = scores.temperature !== null && scores.temperature !== undefined
+                ? Number(scores.temperature).toFixed(0)
+                : '--';
+            const humidityScore = scores.humidity !== null && scores.humidity !== undefined
+                ? Number(scores.humidity).toFixed(0)
+                : '--';
+            const gasScore = scores.gas !== null && scores.gas !== undefined
+                ? Number(scores.gas).toFixed(0)
+                : '--';
+
+            return `
+                <div class="freshness-item freshness-item-${this.escapeHtml(item.level)}">
+                    <div>
+                        <strong>${this.escapeHtml(item.name)}</strong>
+                        <span>${this.escapeHtml(item.time_message || item.status)}</span>
+                    </div>
+                    <div class="freshness-item-score">${Number(item.score).toFixed(1)}</div>
+                    <div class="freshness-detail-grid">
+                        <span>Kelayakan: <strong>${this.escapeHtml(item.status || overall.status)}</strong></span>
+                        <span>Menuju tidak layak: <strong>${this.formatRemainingHours(item.remaining_hours)}</strong></span>
+                        <span>Sensor: <strong>${this.escapeHtml(prediction.sensor?.connection_status || '--')}</strong></span>
+                    </div>
+                    <div class="freshness-breakdown">
+                        <span>Suhu ${this.escapeHtml(tempScore)}</span>
+                        <span>RH ${this.escapeHtml(humidityScore)}</span>
+                        <span>Gas ${this.escapeHtml(gasScore)}</span>
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     renderAnalysisSummary(result) {
@@ -576,6 +504,15 @@ class MenuDetector {
                 }
 
                 this.updateDeviceStatus(data);
+
+                if (
+                    this.lastDetections &&
+                    data.created_at &&
+                    data.created_at !== this.lastFreshnessSensorAt
+                ) {
+                    this.lastFreshnessSensorAt = data.created_at;
+                    this.refreshFreshnessPrediction();
+                }
             }
         } catch (error) {
             console.error('Error loading sensor data:', error);
@@ -640,6 +577,31 @@ class MenuDetector {
         this.notificationTimer = window.setTimeout(() => {
             this.notification.classList.add('hidden');
         }, duration);
+    }
+
+    formatRemainingHours(hours) {
+        const numericHours = Number(hours);
+        if (!Number.isFinite(numericHours)) {
+            return '--';
+        }
+
+        if (numericHours <= 0) {
+            return '0 menit';
+        }
+
+        const totalMinutes = Math.round(numericHours * 60);
+        const hourPart = Math.floor(totalMinutes / 60);
+        const minutePart = totalMinutes % 60;
+
+        if (hourPart <= 0) {
+            return `${minutePart} menit`;
+        }
+
+        if (minutePart === 0) {
+            return `${hourPart} jam`;
+        }
+
+        return `${hourPart} jam ${minutePart} menit`;
     }
 
     formatAge(ageSeconds) {
@@ -799,6 +761,64 @@ class MenuDetector {
             <circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
             <text x="${width - 18}" y="24" text-anchor="end" class="chart-current">${this.escapeHtml(currentValue)}</text>
         `;
+    }
+
+    async loadFieldMonitoringHistory() {
+        if (!this.fieldLatest) return;
+
+        try {
+            const response = await fetch('/api/field-monitoring/history?limit=3');
+            const result = await response.json();
+            if (result.status === 'success' && result.data?.length) {
+                this.renderFieldLatest(result.data);
+            }
+        } catch (error) {
+            console.error('Error loading field monitoring history:', error);
+        }
+    }
+
+    renderFieldLatest(records) {
+        if (!this.fieldLatest) return;
+
+        if (!records || records.length === 0) {
+            this.fieldLatest.innerHTML = '<p class="no-data">Belum ada data lapangan tersimpan.</p>';
+            return;
+        }
+
+        this.fieldLatest.innerHTML = records.map(record => {
+            const createdAt = record.created_at
+                ? new Date(record.created_at).toLocaleString('id-ID')
+                : '--';
+            const temperature = record.temperature !== null && record.temperature !== undefined
+                ? `${Number(record.temperature).toFixed(1)}°C`
+                : '--';
+            const humidity = record.humidity !== null && record.humidity !== undefined
+                ? `${Number(record.humidity).toFixed(1)}%`
+                : '--';
+            const gasValue = record.gas_value !== null && record.gas_value !== undefined
+                ? Number(record.gas_value).toFixed(0)
+                : '--';
+            const imageLink = record.image_url
+                ? `<a href="${this.escapeHtml(record.image_url)}" target="_blank" rel="noopener">Foto</a>`
+                : '<span>Tidak ada foto</span>';
+
+            return `
+                <div class="field-record">
+                    <div>
+                        <strong>${this.escapeHtml(record.stage || '--')} - ${this.escapeHtml(record.stage_label || '')}</strong>
+                        <span>${this.escapeHtml(createdAt)}</span>
+                    </div>
+                    <div class="field-record-grid">
+                        <span>Gas: <strong>${this.escapeHtml(gasValue)}</strong></span>
+                        <span>Status: <strong>${this.escapeHtml(record.gas_status || '--')}</strong></span>
+                        <span>Suhu: <strong>${this.escapeHtml(temperature)}</strong></span>
+                        <span>Kelembapan: <strong>${this.escapeHtml(humidity)}</strong></span>
+                        <span>Lokasi: <strong>${this.escapeHtml(record.location_name || '--')}</strong></span>
+                        ${imageLink}
+                    </div>
+                </div>
+            `;
+        }).join('');
     }
 
     // ========================================================================

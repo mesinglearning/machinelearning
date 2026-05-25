@@ -77,6 +77,7 @@ mbg-webcam-detector/
 ├── requirements.txt            # Python dependencies
 ├── .env.example               # Environment variables template
 ├── DATABASE_SCHEMA.sql        # Supabase table schemas
+├── FOOD_FRESHNESS_SYSTEM.md   # Dokumentasi logika prediksi kelayakan makanan
 ├── ESP32_SENSOR_SETUP.md      # ESP32 DHT22 + MQ135 setup guide
 ├── README.md                  # This file
 ├── templates/
@@ -92,6 +93,14 @@ mbg-webcam-detector/
 └── esp32/
     └── MBG_Sensor_Node/
         └── MBG_Sensor_Node.ino
+```
+
+## 🧠 Dokumentasi Sistem Prediksi
+
+Logika prediksi kelayakan makanan berbasis YOLO, DHT22, MQ-135, threshold per menu, Freshness Score, prediksi sisa waktu layak konsumsi, status klasifikasi, dan kalibrasi sensor dijelaskan di:
+
+```text
+FOOD_FRESHNESS_SYSTEM.md
 ```
 
 ## 🚀 Quick Start

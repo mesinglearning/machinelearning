@@ -53,7 +53,39 @@ CREATE INDEX IF NOT EXISTS idx_sensor_logs_created_at
 
 
 -- ============================================================================
--- 3. Row Level Security (RLS) - Optional
+-- 3. Field Monitoring Logs Table
+-- ============================================================================
+-- Menyimpan data sementara untuk observasi lapangan SPPG/MBG pada tahap T1/T2/T3.
+
+CREATE TABLE IF NOT EXISTS field_monitoring_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stage TEXT NOT NULL,
+    stage_label TEXT,
+    location_name TEXT,
+    actual_menu TEXT,
+    process_time TEXT,
+    duration_minutes INT4,
+    interview_notes TEXT,
+    image_url TEXT,
+    temperature FLOAT8,
+    humidity FLOAT8,
+    gas_status TEXT,
+    gas_value FLOAT8,
+    sensor_created_at TIMESTAMPTZ,
+    sensor_age_seconds INT4,
+    sensor_connection_status TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_field_monitoring_logs_created_at
+    ON field_monitoring_logs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_field_monitoring_logs_stage
+    ON field_monitoring_logs(stage);
+
+
+-- ============================================================================
+-- 4. Row Level Security (RLS) - Optional
 -- ============================================================================
 -- Jika menggunakan authentication, bisa uncomment RLS policies di bawah
 
@@ -75,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_sensor_logs_created_at
 
 
 -- ============================================================================
--- 4. Sample Data (Optional)
+-- 5. Sample Data (Optional)
 -- ============================================================================
 -- Uncomment untuk menambahkan sample data
 

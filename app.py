@@ -173,6 +173,7 @@ YOLO_CONFIDENCE_THRESHOLD = 0.18
 YOLO_IMAGE_SIZE = 640
 LOCAL_DETECTION_HISTORY = []
 LOCAL_SENSOR_HISTORY = []
+LOCAL_FIELD_MONITORING_HISTORY = []
 LAST_YOLO_ERROR = None
 LATEST_SENSOR_DATA = {
     "temperature": None,
@@ -186,6 +187,60 @@ SENSOR_STALE_AFTER_SECONDS = 60
 CAPTURE_REQUEST_STATE = {
     "id": None,
     "requested_at": None
+}
+FIELD_STAGES = {
+    "T1": "Setelah Makanan Matang",
+    "T2": "Setelah Makanan Selesai Dikemas",
+    "T3": "Setelah Sampai di Sekolah",
+}
+
+FRESHNESS_THRESHOLDS = {
+    "rice": {
+        "temperature_max": 35,
+        "temperature_ideal": 25,
+        "humidity_max": 80,
+        "humidity_ideal": 60,
+        "gas_max": 200,
+        "gas_raw_ideal": 360,
+        "gas_raw_max": 430,
+        "base_hours": 4,
+    },
+    "fried_chicken": {
+        "temperature_max": 30,
+        "temperature_ideal": 25,
+        "humidity_max": 75,
+        "humidity_ideal": 60,
+        "gas_max": 300,
+        "gas_raw_ideal": 360,
+        "gas_raw_max": 450,
+        "base_hours": 3,
+    },
+    "broccoli": {
+        "temperature_max": 32,
+        "temperature_ideal": 24,
+        "humidity_max": 85,
+        "humidity_ideal": 70,
+        "gas_max": 150,
+        "gas_raw_ideal": 360,
+        "gas_raw_max": 420,
+        "base_hours": 5,
+    },
+    "apple": {
+        "temperature_max": 28,
+        "temperature_ideal": 22,
+        "humidity_max": 70,
+        "humidity_ideal": 55,
+        "gas_max": 100,
+        "gas_raw_ideal": 360,
+        "gas_raw_max": 410,
+        "base_hours": 8,
+    },
+}
+
+FRESHNESS_WEIGHTS = {
+    "temperature": 0.35,
+    "humidity": 0.25,
+    "gas": 0.40,
 }
 
 
@@ -239,6 +294,34 @@ def freshest_sensor_data(*sensor_sources):
 
     source, data = max(available, key=lambda item: sensor_timestamp(item[1]))
     return enrich_sensor_data(data, source)
+
+
+def latest_sensor_for_prediction():
+    """Return the freshest sensor data from local memory or Supabase."""
+    sources = [
+        (LATEST_SENSOR_DATA.get("source", "local"), LATEST_SENSOR_DATA),
+        ("local-history", LOCAL_SENSOR_HISTORY[0] if LOCAL_SENSOR_HISTORY else None),
+    ]
+
+    if has_supabase_config():
+        try:
+            rows = select_supabase_latest("sensor_logs", limit=1)
+            if rows:
+                latest = rows[0]
+                sources.append((
+                    "supabase",
+                    {
+                        "temperature": latest.get("temperature"),
+                        "humidity": latest.get("humidity"),
+                        "gas_status": latest.get("gas_status"),
+                        "gas_value": latest.get("gas_value"),
+                        "created_at": latest.get("created_at"),
+                    }
+                ))
+        except Exception as e:
+            print(f"Prediction sensor fetch skipped: {e}")
+
+    return freshest_sensor_data(*sources)
 
 # Menu components
 MENU_ITEMS = {
@@ -328,6 +411,304 @@ def sensor_indicates_spoilage(sensor_data):
         return False
 
     return any(keyword in gas_status for keyword in GAS_SPOILAGE_KEYWORDS)
+
+
+def clamp_number(value, minimum=0, maximum=100):
+    return max(minimum, min(maximum, value))
+
+
+def score_against_threshold(value, ideal, maximum):
+    if value is None:
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if numeric_value <= ideal:
+        return 100
+    if numeric_value >= maximum:
+        return 0
+
+    usable_range = max(0.1, maximum - ideal)
+    return clamp_number(((maximum - numeric_value) / usable_range) * 100)
+
+
+def score_gas_value(value, maximum, raw_ideal=None, raw_max=None):
+    if value is None:
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if raw_ideal is not None and raw_max is not None and numeric_value > maximum:
+        return score_against_threshold(numeric_value, raw_ideal, raw_max)
+
+    if numeric_value <= 0:
+        return 100
+    if numeric_value >= maximum:
+        return 0
+
+    return clamp_number((1 - (numeric_value / maximum)) * 100)
+
+
+def freshness_status(score, emergency=False):
+    if emergency:
+        return {
+            "label": "BUSUK / JANGAN DIMAKAN",
+            "level": "danger",
+            "action": "Distribusi harus dihentikan dan data insiden disimpan."
+        }
+
+    if score >= 75:
+        return {
+            "label": "AMAN",
+            "level": "safe",
+            "action": "Monitoring normal."
+        }
+    if score >= 50:
+        return {
+            "label": "WASPADA",
+            "level": "warning",
+            "action": "Pantau lebih sering dan siapkan notifikasi penanggung jawab."
+        }
+    if score >= 25:
+        return {
+            "label": "SEGERA HABISKAN",
+            "level": "urgent",
+            "action": "Prioritaskan konsumsi dan catat ke log."
+        }
+
+    return {
+        "label": "BUSUK / JANGAN DIMAKAN",
+        "level": "danger",
+        "action": "Distribusi harus dihentikan dan data insiden disimpan."
+    }
+
+
+def format_remaining_time_message(hours):
+    try:
+        numeric_hours = float(hours)
+    except (TypeError, ValueError):
+        return "Waktu kelayakan belum bisa dihitung karena data sensor belum lengkap."
+
+    if numeric_hours <= 0:
+        return "Makanan ini sudah tidak layak dikonsumsi."
+
+    total_minutes = int(round(numeric_hours * 60))
+    hour_part = total_minutes // 60
+    minute_part = total_minutes % 60
+
+    if hour_part <= 0:
+        time_text = f"{minute_part} menit"
+    elif minute_part == 0:
+        time_text = f"{hour_part} jam"
+    else:
+        time_text = f"{hour_part} jam {minute_part} menit"
+
+    return f"{time_text} lagi makanan ini tidak layak dikonsumsi."
+
+
+def calculate_item_freshness(item_key, detection, sensor_data):
+    threshold = FRESHNESS_THRESHOLDS[item_key]
+    temperature = sensor_data.get("temperature")
+    humidity = sensor_data.get("humidity")
+    gas_value = sensor_data.get("gas_value")
+
+    temp_score = score_against_threshold(
+        temperature,
+        threshold["temperature_ideal"],
+        threshold["temperature_max"]
+    )
+    humidity_score = score_against_threshold(
+        humidity,
+        threshold["humidity_ideal"],
+        threshold["humidity_max"]
+    )
+    gas_score = score_gas_value(
+        gas_value,
+        threshold["gas_max"],
+        threshold.get("gas_raw_ideal"),
+        threshold.get("gas_raw_max")
+    )
+
+    component_scores = {
+        "temperature": temp_score,
+        "humidity": humidity_score,
+        "gas": gas_score,
+    }
+    available_scores = {
+        key: value
+        for key, value in component_scores.items()
+        if value is not None
+    }
+
+    if not available_scores:
+        weighted_score = 0
+    else:
+        used_weight = sum(FRESHNESS_WEIGHTS[key] for key in available_scores.keys())
+        weighted_score = sum(
+            available_scores[key] * FRESHNESS_WEIGHTS[key]
+            for key in available_scores.keys()
+        ) / used_weight
+
+    visual_penalty = 0
+    if detection.get("detected") and not detection.get("acceptable"):
+        visual_penalty = 35
+
+    score = clamp_number(round(weighted_score - visual_penalty, 1))
+
+    gas_ratio = None
+    emergency = False
+    try:
+        if (
+            gas_value is not None
+            and threshold.get("gas_raw_max")
+            and float(gas_value) > threshold["gas_max"]
+        ):
+            gas_ratio = float(gas_value) / threshold["gas_raw_max"]
+        else:
+            gas_ratio = float(gas_value) / threshold["gas_max"] if gas_value is not None else None
+        emergency = gas_ratio is not None and gas_ratio >= 1.5
+    except (TypeError, ValueError):
+        gas_ratio = None
+
+    if sensor_indicates_spoilage(sensor_data):
+        score = min(score, 24)
+
+    if emergency:
+        score = 0
+
+    temp_factor = 1
+    try:
+        if temperature is not None:
+            temp_factor = 0.5 ** max(0, (float(temperature) - threshold["temperature_ideal"]) / 10)
+    except (TypeError, ValueError):
+        temp_factor = 1
+
+    if gas_ratio is None:
+        gas_factor = 1
+    elif gas_ratio >= 1.5:
+        gas_factor = 0
+    else:
+        gas_factor = clamp_number(1 - (gas_ratio ** 1.4), 0.05, 1)
+
+    humidity_factor = 1
+    try:
+        if humidity is not None and float(humidity) > threshold["humidity_ideal"]:
+            humidity_range = max(1, threshold["humidity_max"] - threshold["humidity_ideal"])
+            humidity_ratio = (float(humidity) - threshold["humidity_ideal"]) / humidity_range
+            humidity_factor = clamp_number(1 - (humidity_ratio * 0.55), 0.15, 1)
+    except (TypeError, ValueError):
+        humidity_factor = 1
+
+    remaining_hours = round(
+        threshold["base_hours"] * temp_factor * gas_factor * humidity_factor,
+        2
+    )
+
+    status = freshness_status(score, emergency=emergency)
+    return {
+        "item_key": item_key,
+        "name": detection.get("name", MENU_ITEMS[item_key]["name"]),
+        "score": score,
+        "status": status["label"],
+        "level": status["level"],
+        "action": status["action"],
+        "remaining_hours": remaining_hours,
+        "time_message": format_remaining_time_message(remaining_hours),
+        "threshold": threshold,
+        "component_scores": component_scores,
+        "detected_quality": detection.get("quality_label"),
+        "visual_acceptable": detection.get("acceptable"),
+        "emergency_gas_trigger": emergency,
+    }
+
+
+def calculate_freshness_prediction(detection_result, sensor_data):
+    enriched_sensor = enrich_sensor_data(sensor_data, sensor_data.get("source", "local"))
+    detections = detection_result.get("detections", {})
+    detected_items = [
+        item_key
+        for item_key in MENU_ITEMS.keys()
+        if detections.get(item_key, {}).get("detected")
+    ]
+
+    if not detected_items:
+        return {
+            "status": "waiting",
+            "message": "Belum ada menu terdeteksi dari gambar.",
+            "sensor": enriched_sensor,
+            "items": [],
+            "overall": None,
+        }
+
+    has_sensor_values = any(
+        enriched_sensor.get(field) is not None
+        for field in ("temperature", "humidity", "gas_value")
+    )
+    detected_names = [
+        detections[item_key].get("name", MENU_ITEMS[item_key]["name"])
+        for item_key in detected_items
+    ]
+
+    if not has_sensor_values:
+        return {
+            "status": "waiting_sensor",
+            "message": "Menu terdeteksi, tetapi data sensor ESP32 belum masuk.",
+            "sensor": enriched_sensor,
+            "detected_menu": detected_names,
+            "items": [
+                {
+                    "item_key": item_key,
+                    "name": detections[item_key].get("name", MENU_ITEMS[item_key]["name"]),
+                    "score": None,
+                    "status": "Menunggu sensor",
+                    "level": "waiting",
+                    "remaining_hours": None,
+                    "time_message": "Menunggu data suhu, kelembapan, dan gas dari ESP32.",
+                    "component_scores": {
+                        "temperature": None,
+                        "humidity": None,
+                        "gas": None,
+                    },
+                }
+                for item_key in detected_items
+            ],
+            "overall": None,
+        }
+
+    items = [
+        calculate_item_freshness(item_key, detections[item_key], enriched_sensor)
+        for item_key in detected_items
+    ]
+    worst_item = min(items, key=lambda item: item["score"])
+    shortest_time = min(item["remaining_hours"] for item in items)
+    overall_status = freshness_status(worst_item["score"])
+
+    if any(item["emergency_gas_trigger"] for item in items):
+        overall_status = freshness_status(0, emergency=True)
+        worst_item = min(items, key=lambda item: item["remaining_hours"])
+
+    return {
+        "status": "success",
+        "message": "Prediksi otomatis dari gambar dan sensor IoT.",
+        "sensor": enriched_sensor,
+        "items": items,
+        "overall": {
+            "score": worst_item["score"],
+            "status": overall_status["label"],
+            "level": overall_status["level"],
+            "action": overall_status["action"],
+            "remaining_hours": round(shortest_time, 2),
+            "time_message": format_remaining_time_message(shortest_time),
+            "critical_item": worst_item["name"],
+            "sensor_live": not enriched_sensor.get("is_stale"),
+        },
+    }
 
 
 def apply_sensor_quality_context(detection_result):
@@ -513,66 +894,13 @@ def normalize_class_name(class_name):
     return class_name.strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def parse_roi_config(raw_config):
-    if not raw_config:
-        return None
-
-    try:
-        config = json.loads(raw_config)
-    except (TypeError, json.JSONDecodeError):
-        return None
-
-    parsed = {}
-    for item_key in MENU_ITEMS.keys():
-        roi = config.get(item_key)
-        if not isinstance(roi, dict):
-            continue
-
-        try:
-            left = float(roi.get("left"))
-            top = float(roi.get("top"))
-            width = float(roi.get("width"))
-            height = float(roi.get("height"))
-        except (TypeError, ValueError):
-            continue
-
-        left = max(0, min(left, 95))
-        top = max(0, min(top, 95))
-        width = max(5, min(width, 100 - left))
-        height = max(5, min(height, 100 - top))
-        parsed[item_key] = {
-            "left": left,
-            "top": top,
-            "width": width,
-            "height": height
-        }
-
-    return parsed or None
-
-
-def roi_percent_to_box(roi, width, height):
-    x1 = int(width * roi["left"] / 100)
-    y1 = int(height * roi["top"] / 100)
-    x2 = int(width * (roi["left"] + roi["width"]) / 100)
-    y2 = int(height * (roi["top"] + roi["height"]) / 100)
-    return (x1, y1, x2, y2)
-
-
-def apple_region_looks_fresh(image_path, roi_config=None):
+def apple_region_looks_fresh(image_path):
     """Use a simple color sanity check to reduce false rotten-apple detections."""
     try:
         image = Image.open(image_path).convert("RGB")
         width, height = image.size
 
-        if roi_config and "apple" in roi_config:
-            crop_box = roi_percent_to_box(roi_config["apple"], width, height)
-        else:
-            crop_box = (
-                int(width * 0.12),
-                int(height * 0.06),
-                int(width * 0.46),
-                int(height * 0.45)
-            )
+        crop_box = (0, 0, width, height)
 
         crop = image.crop(crop_box)
         crop.thumbnail((96, 96))
@@ -601,7 +929,7 @@ def apple_region_looks_fresh(image_path, roi_config=None):
         return False
 
 
-def apply_visual_sanity_checks(detection_result, image_path, roi_config=None):
+def apply_visual_sanity_checks(detection_result, image_path):
     """Correct obvious visual false positives without changing the YOLO model."""
     apple = detection_result.get("detections", {}).get("apple")
     if not apple:
@@ -610,7 +938,7 @@ def apply_visual_sanity_checks(detection_result, image_path, roi_config=None):
     if (
         apple.get("detected_class") == "rotten_apple"
         and apple.get("confidence", 0) < 0.82
-        and apple_region_looks_fresh(image_path, roi_config)
+        and apple_region_looks_fresh(image_path)
     ):
         apple.update({
             "quality": "fresh",
@@ -627,10 +955,10 @@ def apply_visual_sanity_checks(detection_result, image_path, roi_config=None):
     return detection_result
 
 
-def build_yolo_input_paths(image_path, roi_config=None):
+def build_yolo_input_paths(image_path):
     """
-    Return the full frame plus temporary crops for tray-style images.
-    The crop pass helps small food compartments get analyzed at a larger scale.
+    Return the full image plus an enhanced full-image variant.
+    The detector should infer menu items from the complete image without manual regions.
     """
     paths = [str(image_path)]
     temp_dir = None
@@ -639,7 +967,7 @@ def build_yolo_input_paths(image_path, roi_config=None):
         image = Image.open(image_path)
         width, height = image.size
 
-        if width < 360 or height < 260:
+        if width < 240 or height < 180:
             return paths, temp_dir
 
         temp_dir = tempfile.TemporaryDirectory()
@@ -651,36 +979,13 @@ def build_yolo_input_paths(image_path, roi_config=None):
         enhanced_path = temp_path / "enhanced_full.jpg"
         enhanced_image.save(enhanced_path, quality=94)
         paths.append(str(enhanced_path))
-
-        # Fixed tray layout ROIs based on the current plate position:
-        # apple top-left, rice top-right, broccoli bottom-left, chicken bottom-middle.
-        crop_boxes = [
-            (int(width * 0.12), int(height * 0.06), int(width * 0.46), int(height * 0.45)),
-            (int(width * 0.28), int(height * 0.06), int(width * 0.58), int(height * 0.46)),
-            (int(width * 0.12), int(height * 0.40), int(width * 0.50), int(height * 0.90)),
-            (int(width * 0.33), int(height * 0.38), int(width * 0.68), int(height * 0.94)),
-        ]
-
-        if roi_config:
-            for roi in roi_config.values():
-                crop_boxes.append(roi_percent_to_box(roi, width, height))
-
-        for index, box in enumerate(crop_boxes, start=1):
-            x1, y1, x2, y2 = box
-            if x2 - x1 < 120 or y2 - y1 < 120:
-                continue
-
-            crop = image.crop((x1, y1, x2, y2))
-            crop_path = temp_path / f"crop_{index}.jpg"
-            crop.save(crop_path, quality=92)
-            paths.append(str(crop_path))
     except Exception as crop_error:
-        print(f"YOLO crop helper skipped: {crop_error}")
+        print(f"YOLO image enhancement skipped: {crop_error}")
 
     return paths, temp_dir
 
 
-def detect_menu(image_path, roi_config=None):
+def detect_menu(image_path):
     """
     Menu detection for food items.
     Uses custom YOLO when models/best.pt exists, otherwise uses safe dummy data.
@@ -751,7 +1056,7 @@ def detect_menu(image_path, roi_config=None):
         model = YOLO(str(CUSTOM_MODEL_PATH))
         
         # Run inference
-        input_paths, temp_dir = build_yolo_input_paths(image_path, roi_config=roi_config)
+        input_paths, temp_dir = build_yolo_input_paths(image_path)
         try:
             results = model.predict(
                 input_paths,
@@ -852,6 +1157,50 @@ def save_to_supabase(image_url, menu_status, detections):
         return None
 
 
+def normalize_field_text(value, max_length=500):
+    text = str(value or "").strip()
+    if len(text) > max_length:
+        return text[:max_length]
+    return text
+
+
+def build_field_monitoring_record(form_data, image_url=None):
+    stage = normalize_field_text(form_data.get("stage"), 8).upper()
+    if stage not in FIELD_STAGES:
+        stage = "T1"
+
+    latest_sensor = freshest_sensor_data(
+        ("local", LATEST_SENSOR_DATA),
+        ("local-history", LOCAL_SENSOR_HISTORY[0] if LOCAL_SENSOR_HISTORY else None)
+    )
+
+    try:
+        duration_minutes = int(float(form_data.get("duration_minutes"))) if form_data.get("duration_minutes") else None
+    except (TypeError, ValueError):
+        duration_minutes = None
+
+    now_iso = datetime.now(UTC).isoformat()
+    return {
+        "id": uuid.uuid4().hex,
+        "stage": stage,
+        "stage_label": FIELD_STAGES[stage],
+        "location_name": normalize_field_text(form_data.get("location_name"), 120),
+        "actual_menu": normalize_field_text(form_data.get("actual_menu"), 220),
+        "process_time": normalize_field_text(form_data.get("process_time"), 80),
+        "duration_minutes": duration_minutes,
+        "interview_notes": normalize_field_text(form_data.get("interview_notes"), 1000),
+        "image_url": image_url,
+        "temperature": latest_sensor.get("temperature"),
+        "humidity": latest_sensor.get("humidity"),
+        "gas_status": latest_sensor.get("gas_status"),
+        "gas_value": latest_sensor.get("gas_value"),
+        "sensor_created_at": latest_sensor.get("created_at"),
+        "sensor_age_seconds": latest_sensor.get("age_seconds"),
+        "sensor_connection_status": latest_sensor.get("connection_status"),
+        "created_at": now_iso,
+    }
+
+
 # Routes
 
 @app.route("/")
@@ -882,16 +1231,26 @@ def api_detect():
         
         # Save image
         image_file.save(str(image_path))
-        roi_config = parse_roi_config(request.form.get("roi_config"))
-        
+        try:
+            normalized_image = Image.open(image_path).convert("RGB")
+            normalized_image.save(image_path, "JPEG", quality=92)
+        except Exception as image_error:
+            image_path.unlink(missing_ok=True)
+            return jsonify({
+                "status": "error",
+                "message": f"File gambar tidak valid: {image_error}"
+            }), 400
         # Run detection
-        detection_result = detect_menu(str(image_path), roi_config=roi_config)
+        detection_result = detect_menu(str(image_path))
         detection_result = apply_visual_sanity_checks(
             detection_result,
-            str(image_path),
-            roi_config=roi_config
+            str(image_path)
         )
         detection_result = apply_sensor_quality_context(detection_result)
+        freshness_prediction = calculate_freshness_prediction(
+            detection_result,
+            latest_sensor_for_prediction()
+        )
         
         # Upload image to Supabase Storage when configured.
         local_image_url = f"/static/captures/{filename}"
@@ -904,6 +1263,7 @@ def api_detect():
             "image_url": image_url,
             "menu_status": menu_status,
             "detections": detections,
+            "freshness_prediction": freshness_prediction,
             "created_at": datetime.now(UTC).isoformat()
         }
 
@@ -924,6 +1284,7 @@ def api_detect():
             "sensor_quality_note": detection_result.get("sensor_quality_note"),
             "model_used": detection_result.get("model_used", "unknown"),
             "detections": detections,
+            "freshness_prediction": freshness_prediction,
             "timestamp": history_record["created_at"]
         })
     
@@ -931,10 +1292,35 @@ def api_detect():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+@app.route("/api/freshness-prediction", methods=["POST"])
+def api_freshness_prediction():
+    """Recalculate freshness for existing detections using the latest sensor data."""
+    try:
+        data = request.get_json(silent=True) or {}
+        detections = data.get("detections")
+        if not isinstance(detections, dict):
+            return jsonify({
+                "status": "error",
+                "message": "detections object is required"
+            }), 400
+
+        prediction = calculate_freshness_prediction(
+            {"detections": detections},
+            latest_sensor_for_prediction()
+        )
+
+        return jsonify({
+            "status": "success",
+            "freshness_prediction": prediction
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 @app.route("/api/preview-detect", methods=["POST"])
 def api_preview_detect():
     """
-    Lightweight detection for live ROI guidance.
+    Lightweight detection for a temporary full-image preview.
     It does not save images, history, or Supabase records.
     """
     temp_path = None
@@ -950,12 +1336,10 @@ def api_preview_detect():
             temp_path = temp_file.name
             image_file.save(temp_path)
 
-        roi_config = parse_roi_config(request.form.get("roi_config"))
-        detection_result = detect_menu(temp_path, roi_config=roi_config)
+        detection_result = detect_menu(temp_path)
         detection_result = apply_visual_sanity_checks(
             detection_result,
-            temp_path,
-            roi_config=roi_config
+            temp_path
         )
         detection_result = apply_sensor_quality_context(detection_result)
 
@@ -1217,6 +1601,63 @@ def api_history():
             "message": "Supabase fetch failed, returning local history",
             "data": LOCAL_DETECTION_HISTORY[:5]
         }), 200
+
+
+@app.route("/api/field-monitoring", methods=["POST"])
+def api_field_monitoring():
+    """Save a field monitoring checkpoint for temporary SPPG/MBG data collection."""
+    try:
+        image_url = None
+        image_file = request.files.get("image")
+
+        if image_file and image_file.filename:
+            filename = f"field_{uuid.uuid4().hex}.jpg"
+            image_path = CAPTURES_DIR / filename
+            image_file.save(str(image_path))
+            local_image_url = f"/static/captures/{filename}"
+            image_url = upload_capture_to_supabase(image_path, filename) or local_image_url
+
+        record = build_field_monitoring_record(request.form, image_url=image_url)
+        LOCAL_FIELD_MONITORING_HISTORY.insert(0, record)
+        del LOCAL_FIELD_MONITORING_HISTORY[20:]
+
+        supabase_saved = False
+        if has_supabase_config():
+            supabase_record = {key: value for key, value in record.items() if key != "id"}
+            supabase_saved = insert_supabase_row("field_monitoring_logs", supabase_record) is not None
+
+        if has_supabase_config() and not supabase_saved:
+            return jsonify({
+                "status": "warning",
+                "message": "Data tersimpan lokal, tetapi belum masuk Supabase. Cek env, RLS, atau log server.",
+                "data": record
+            }), 200
+
+        return jsonify({
+            "status": "success",
+            "message": "Data monitoring lapangan tersimpan",
+            "data": record
+        }), 201
+    except Exception as e:
+        print(f"Error saving field monitoring data: {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/field-monitoring/history", methods=["GET"])
+def api_field_monitoring_history():
+    """Return recent field monitoring checkpoints."""
+    limit = request.args.get("limit", default=5, type=int)
+    limit = max(1, min(limit, 20))
+
+    if has_supabase_config():
+        data = select_supabase_latest("field_monitoring_logs", limit=limit)
+        if data is not None:
+            return jsonify({"status": "success", "data": data if data else []}), 200
+
+    return jsonify({
+        "status": "success",
+        "data": LOCAL_FIELD_MONITORING_HISTORY[:limit]
+    }), 200
 
 
 @app.route("/api/status", methods=["GET"])

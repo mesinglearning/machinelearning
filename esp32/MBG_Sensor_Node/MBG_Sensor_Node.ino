@@ -9,13 +9,13 @@
 // ============================================================================
 
 // WiFi configuration
-const char* WIFI_SSID = "Infinix";
-const char* WIFI_PASSWORD = "penta1204";
+const char* WIFI_SSID = "CIEBRO2";
+const char* WIFI_PASSWORD = "1234566789";
 
 // Use your laptop/server LAN IP, not localhost.
 // Example: http://192.168.18.8:5000/api/sensor
-const char* SERVER_URL = "http:// 10.234.58.210:5000/api/sensor";
-const char* CAPTURE_URL = "http://10.234.58.210:5000/api/capture-request";
+const char* SERVER_URL = "https://mbg-menu-detector-mesinglearning-production.up.railway.app/api/sensor";
+const char* CAPTURE_URL = "https://mbg-menu-detector-mesinglearning-production.up.railway.app/api/capture-request";
 
 // Pin configuration
 #define DHT_PIN 4
