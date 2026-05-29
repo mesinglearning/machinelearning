@@ -169,12 +169,14 @@ def select_supabase_latest(table, limit=1):
 CAPTURES_DIR = Path("static/captures")
 CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 CUSTOM_MODEL_PATH = Path("models/best.pt")
-YOLO_CONFIDENCE_THRESHOLD = 0.18
-YOLO_IMAGE_SIZE = 640
+YOLO_CONFIDENCE_THRESHOLD = 0.12
+YOLO_IMAGE_SIZE = 832
 LOCAL_DETECTION_HISTORY = []
 LOCAL_SENSOR_HISTORY = []
 LOCAL_FIELD_MONITORING_HISTORY = []
 LAST_YOLO_ERROR = None
+YOLO_MODEL = None
+YOLO_MODEL_MTIME = None
 LATEST_SENSOR_DATA = {
     "temperature": None,
     "humidity": None,
@@ -380,13 +382,13 @@ QUALITY_CLASSES.update({
 
 MIN_CONFIDENCE_BY_CLASS = {
     "fresh_rice": 0.25,
-    "stale_rice": 0.25,
-    "fresh_fried_chicken": 0.10,
-    "spoiled_fried_chicken": 0.10,
-    "fresh_apple": 0.30,
-    "rotten_apple": 0.30,
-    "fresh_broccoli": 0.18,
-    "rotten_broccoli": 0.18,
+    "stale_rice": 0.32,
+    "fresh_fried_chicken": 0.12,
+    "spoiled_fried_chicken": 0.22,
+    "fresh_apple": 0.22,
+    "rotten_apple": 0.38,
+    "fresh_broccoli": 0.16,
+    "rotten_broccoli": 0.30,
 }
 
 
@@ -890,6 +892,28 @@ def dummy_detect_menu(image_path):
     return build_detection_response(detections, "dummy")
 
 
+def yolo_error_response(message):
+    """Return an honest empty result when an available YOLO model cannot run."""
+    return {
+        **build_detection_response(build_empty_detections(), "yolo-error"),
+        "message": message
+    }
+
+
+def get_yolo_model():
+    """Load the custom YOLO model once and refresh it when the file changes."""
+    global YOLO_MODEL, YOLO_MODEL_MTIME
+
+    model_mtime = CUSTOM_MODEL_PATH.stat().st_mtime
+    if YOLO_MODEL is None or YOLO_MODEL_MTIME != model_mtime:
+        from ultralytics import YOLO
+        YOLO_MODEL = YOLO(str(CUSTOM_MODEL_PATH))
+        YOLO_MODEL_MTIME = model_mtime
+        print(f"Loaded YOLO model: {CUSTOM_MODEL_PATH}")
+
+    return YOLO_MODEL
+
+
 def normalize_class_name(class_name):
     return class_name.strip().lower().replace("-", "_").replace(" ", "_")
 
@@ -957,14 +981,13 @@ def apply_visual_sanity_checks(detection_result, image_path):
 
 def build_yolo_input_paths(image_path):
     """
-    Return the full image plus an enhanced full-image variant.
-    The detector should infer menu items from the complete image without manual regions.
+    Return full-image and crop variants so small foods remain visible to YOLO.
     """
     paths = [str(image_path)]
     temp_dir = None
 
     try:
-        image = Image.open(image_path)
+        image = Image.open(image_path).convert("RGB")
         width, height = image.size
 
         if width < 240 or height < 180:
@@ -973,12 +996,37 @@ def build_yolo_input_paths(image_path):
         temp_dir = tempfile.TemporaryDirectory()
         temp_path = Path(temp_dir.name)
 
-        enhanced_image = ImageOps.autocontrast(image.convert("RGB"))
+        enhanced_image = ImageOps.autocontrast(image)
         enhanced_image = ImageEnhance.Sharpness(enhanced_image).enhance(1.6)
         enhanced_image = ImageEnhance.Contrast(enhanced_image).enhance(1.18)
         enhanced_path = temp_path / "enhanced_full.jpg"
         enhanced_image.save(enhanced_path, quality=94)
         paths.append(str(enhanced_path))
+
+        crop_boxes = []
+        if width >= 480 and height >= 360:
+            side_w = int(width * 0.72)
+            side_h = int(height * 0.72)
+            center_left = max(0, (width - side_w) // 2)
+            center_top = max(0, (height - side_h) // 2)
+            crop_boxes.append((center_left, center_top, center_left + side_w, center_top + side_h))
+
+            half_w = int(width * 0.58)
+            half_h = int(height * 0.58)
+            crop_boxes.extend([
+                (0, 0, half_w, half_h),
+                (width - half_w, 0, width, half_h),
+                (0, height - half_h, half_w, height),
+                (width - half_w, height - half_h, width, height),
+            ])
+
+        for index, crop_box in enumerate(crop_boxes):
+            crop = image.crop(crop_box)
+            crop = ImageOps.autocontrast(crop)
+            crop = ImageEnhance.Sharpness(crop).enhance(1.35)
+            crop_path = temp_path / f"crop_{index}.jpg"
+            crop.save(crop_path, quality=94)
+            paths.append(str(crop_path))
     except Exception as crop_error:
         print(f"YOLO image enhancement skipped: {crop_error}")
 
@@ -1009,7 +1057,7 @@ def detect_menu(image_path):
                 "menu_complete": False
         }
 
-        if not CUSTOM_MODEL_PATH.exists():
+        if not CUSTOM_MODEL_PATH.exists() or CUSTOM_MODEL_PATH.stat().st_size == 0:
             LAST_YOLO_ERROR = f"Model not found: {CUSTOM_MODEL_PATH}"
             print("YOLO model not found, using dummy detection")
             return dummy_detect_menu(image_path)
@@ -1018,8 +1066,10 @@ def detect_menu(image_path):
             from ultralytics import YOLO
         except Exception as import_error:
             LAST_YOLO_ERROR = f"Import error: {import_error}"
-            print(f"YOLO error, fallback to dummy detection: {import_error}")
-            return dummy_detect_menu(image_path)
+            print(f"YOLO import error: {import_error}")
+            return yolo_error_response(
+                "Dependency YOLO gagal dimuat. Install requirements lalu restart server."
+            )
         
         # Map class names to visual quality classes
         # This mapping can be customized based on YOLO model training
@@ -1053,7 +1103,7 @@ def detect_menu(image_path):
         }
         
         print("Using custom YOLO model")
-        model = YOLO(str(CUSTOM_MODEL_PATH))
+        model = get_yolo_model()
         
         # Run inference
         input_paths, temp_dir = build_yolo_input_paths(image_path)
@@ -1062,6 +1112,8 @@ def detect_menu(image_path):
                 input_paths,
                 conf=YOLO_CONFIDENCE_THRESHOLD,
                 imgsz=YOLO_IMAGE_SIZE,
+                iou=0.55,
+                max_det=40,
                 verbose=False
             )
         finally:
@@ -1127,7 +1179,11 @@ def detect_menu(image_path):
     
     except Exception as e:
         LAST_YOLO_ERROR = f"{type(e).__name__}: {e}"
-        print(f"YOLO error, fallback to dummy detection: {e}")
+        print(f"YOLO error: {e}")
+        if CUSTOM_MODEL_PATH.exists() and CUSTOM_MODEL_PATH.stat().st_size > 0:
+            return yolo_error_response(
+                "Model YOLO tersedia, tetapi gagal menjalankan deteksi. Cek log server."
+            )
         return dummy_detect_menu(image_path)
 
 

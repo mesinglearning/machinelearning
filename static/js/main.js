@@ -53,6 +53,14 @@ class MenuDetector {
         this.sensorStaleNotified = false;
         this.lastDetections = null;
         this.lastFreshnessSensorAt = null;
+        this.autoScanTimer = null;
+        this.isAutoScanning = false;
+        this.autoFoodHitCount = 0;
+        this.autoCaptureCooldownUntil = 0;
+        this.autoScanIntervalMs = 3500;
+        this.autoCaptureCooldownMs = 20000;
+        this.autoDetectionConfidence = 0.35;
+        this.autoDetectionRequiredHits = 2;
 
         this.initEventListeners();
         this.loadAppStatus();
@@ -121,9 +129,10 @@ class MenuDetector {
             this.updateSummary(this.captureBtnStatus, 'Siap capture');
             this.updateSummary(this.stopBtnStatus, 'Klik untuk berhenti');
             this.cameraFrame?.classList.add('camera-active');
+            this.startAutoFoodWatcher();
 
             this.setDetectionProgress(false);
-            this.showNotification('Kamera aktif. Menu siap dicapture.', 'success');
+            this.showNotification('Kamera aktif. Auto capture akan berjalan saat makanan terdeteksi.', 'success');
         } catch (error) {
             console.error('Error accessing camera:', error);
             this.cleanupCameraStream();
@@ -142,6 +151,7 @@ class MenuDetector {
 
     stopCamera() {
         this.cleanupCameraStream();
+        this.stopAutoFoodWatcher();
 
         // Disable buttons
         this.startBtn.disabled = false;
@@ -156,6 +166,8 @@ class MenuDetector {
     }
 
     cleanupCameraStream() {
+        this.stopAutoFoodWatcher();
+
         if (this.mediaStream) {
             this.mediaStream.getTracks().forEach(track => track.stop());
             this.mediaStream = null;
@@ -208,14 +220,7 @@ class MenuDetector {
             this.updateSummary(this.captureBtnStatus, 'Mengambil frame...');
             this.setDetectionProgress(true, 'Mengambil gambar...', 'Frame kamera sedang disiapkan untuk YOLO.');
 
-            // Capture frame from video
-            const ctx = this.canvas.getContext('2d');
-            this.canvas.width = this.video.videoWidth;
-            this.canvas.height = this.video.videoHeight;
-            ctx.drawImage(this.video, 0, 0);
-
-            // Convert canvas to blob (JPEG)
-            const blob = await this.canvasToBlob(this.canvas, 'image/jpeg', 0.9);
+            const blob = await this.captureVideoBlob();
 
             // Send to Flask backend
             await this.sendImageForDetection(blob, 'capture.jpg', 'Menganalisis capture...', 'YOLO membaca menu lalu sistem menggabungkan data sensor.');
@@ -234,6 +239,115 @@ class MenuDetector {
             }
             this.uploadDetectBtn.disabled = !this.imageUpload?.files?.length;
         }
+    }
+
+    startAutoFoodWatcher() {
+        this.stopAutoFoodWatcher();
+        this.autoFoodHitCount = 0;
+        this.autoCaptureCooldownUntil = Date.now() + 2500;
+        this.updateSummary(this.captureBtnStatus, 'Auto scan aktif');
+        this.scheduleAutoFoodScan(2500);
+    }
+
+    stopAutoFoodWatcher() {
+        if (this.autoScanTimer) {
+            window.clearTimeout(this.autoScanTimer);
+            this.autoScanTimer = null;
+        }
+        this.isAutoScanning = false;
+        this.autoFoodHitCount = 0;
+    }
+
+    scheduleAutoFoodScan(delay = this.autoScanIntervalMs) {
+        if (!this.mediaStream) return;
+
+        this.autoScanTimer = window.setTimeout(() => {
+            this.scanForFoodAndAutoCapture();
+        }, delay);
+    }
+
+    async scanForFoodAndAutoCapture() {
+        if (!this.mediaStream || this.isAutoScanning) return;
+
+        if (this.isDetecting || Date.now() < this.autoCaptureCooldownUntil) {
+            this.scheduleAutoFoodScan();
+            return;
+        }
+
+        try {
+            this.isAutoScanning = true;
+            this.updateSummary(this.captureBtnStatus, 'Mencari makanan...');
+
+            const previewBlob = await this.captureVideoBlob(640, 0.72);
+            const result = await this.previewDetectFood(previewBlob);
+            const detectedCount = this.countReliableFoodDetections(result.detections || {});
+
+            if (detectedCount > 0) {
+                this.autoFoodHitCount += 1;
+                this.updateSummary(
+                    this.captureBtnStatus,
+                    `Makanan terdeteksi ${this.autoFoodHitCount}/${this.autoDetectionRequiredHits}`
+                );
+            } else {
+                this.autoFoodHitCount = 0;
+                this.updateSummary(this.captureBtnStatus, 'Auto scan aktif');
+            }
+
+            if (this.autoFoodHitCount >= this.autoDetectionRequiredHits) {
+                this.autoFoodHitCount = 0;
+                this.autoCaptureCooldownUntil = Date.now() + this.autoCaptureCooldownMs;
+                this.showNotification('Makanan terdeteksi. Auto capture dijalankan.', 'success');
+                await this.captureAndDetect();
+            }
+        } catch (error) {
+            console.error('Auto food scan error:', error);
+            this.autoFoodHitCount = 0;
+            this.updateSummary(this.captureBtnStatus, 'Auto scan menunggu');
+        } finally {
+            this.isAutoScanning = false;
+            this.scheduleAutoFoodScan();
+        }
+    }
+
+    async previewDetectFood(imageBlob) {
+        const formData = new FormData();
+        formData.append('image', imageBlob, 'preview.jpg');
+
+        const response = await fetch('/api/preview-detect', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.status !== 'success') {
+            throw new Error(result.message || 'Preview detection failed');
+        }
+
+        return result;
+    }
+
+    countReliableFoodDetections(detections) {
+        return this.menuKeys.filter(key => {
+            const detection = detections[key];
+            return detection?.detected &&
+                Number(detection.confidence || 0) >= this.autoDetectionConfidence &&
+                detection.quality_source !== 'MQ135';
+        }).length;
+    }
+
+    async captureVideoBlob(maxWidth = null, quality = 0.9) {
+        const sourceWidth = this.video.videoWidth;
+        const sourceHeight = this.video.videoHeight;
+        const scale = maxWidth && sourceWidth > maxWidth ? maxWidth / sourceWidth : 1;
+        const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+        const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+
+        const ctx = this.canvas.getContext('2d');
+        this.canvas.width = targetWidth;
+        this.canvas.height = targetHeight;
+        ctx.drawImage(this.video, 0, 0, targetWidth, targetHeight);
+
+        return this.canvasToBlob(this.canvas, 'image/jpeg', quality);
     }
 
     async detectUploadedImage() {
@@ -590,8 +704,9 @@ class MenuDetector {
 
     updateModelMode(modelMode) {
         const isYolo = modelMode === 'custom-yolo';
-        this.updateSummary(this.modelState, isYolo ? 'YOLO Aktif' : 'Demo Mode');
-        this.updateSummary(this.modelMeta, isYolo ? 'models/best.pt digunakan' : 'Dummy fallback aktif');
+        const isYoloError = modelMode === 'yolo-error';
+        this.updateSummary(this.modelState, isYolo ? 'YOLO Aktif' : (isYoloError ? 'YOLO Error' : 'Demo Mode'));
+        this.updateSummary(this.modelMeta, isYolo ? 'models/best.pt digunakan' : (isYoloError ? 'Cek log server' : 'Dummy fallback aktif'));
     }
 
     updateDeviceStatus(data) {
@@ -609,6 +724,7 @@ class MenuDetector {
 
     formatModelName(modelMode) {
         if (modelMode === 'custom-yolo') return 'Custom YOLO';
+        if (modelMode === 'yolo-error') return 'YOLO error';
         if (modelMode === 'dummy') return 'Dummy fallback';
         return modelMode || 'Unknown';
     }
