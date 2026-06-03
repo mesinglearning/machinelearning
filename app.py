@@ -1,7 +1,6 @@
 ﻿import os
 import json
 import uuid
-import random
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -173,7 +172,6 @@ YOLO_CONFIDENCE_THRESHOLD = 0.12
 YOLO_IMAGE_SIZE = 832
 LOCAL_DETECTION_HISTORY = []
 LOCAL_SENSOR_HISTORY = []
-LOCAL_FIELD_MONITORING_HISTORY = []
 LAST_YOLO_ERROR = None
 YOLO_MODEL = None
 YOLO_MODEL_MTIME = None
@@ -189,11 +187,6 @@ SENSOR_STALE_AFTER_SECONDS = 60
 CAPTURE_REQUEST_STATE = {
     "id": None,
     "requested_at": None
-}
-FIELD_STAGES = {
-    "T1": "Setelah Makanan Matang",
-    "T2": "Setelah Makanan Selesai Dikemas",
-    "T3": "Setelah Sampai di Sekolah",
 }
 
 FRESHNESS_THRESHOLDS = {
@@ -845,7 +838,7 @@ def get_model_state():
     return {
         "model_available": model_exists,
         "model_path": str(CUSTOM_MODEL_PATH),
-        "model_mode": "custom-yolo" if model_exists else "dummy",
+        "model_mode": "custom-yolo" if model_exists else "yolo-error",
         "yolo_import_available": yolo_import_available,
         "yolo_import_error": yolo_import_error,
         "last_yolo_error": LAST_YOLO_ERROR,
@@ -862,38 +855,8 @@ def get_model_state():
     }
 
 
-def dummy_detect_menu(image_path):
-    """
-    Safe demo detector used when a custom YOLO model is not available.
-    The result is deterministic per image path, so repeated reads are stable.
-    """
-    seed = Path(image_path).name
-    rng = random.Random(seed)
-    detections = {}
-
-    for item_key, item_info in MENU_ITEMS.items():
-        detected = rng.random() >= 0.35
-        acceptable = detected and rng.random() >= 0.2
-        quality = "fresh" if acceptable else "bad"
-        detections[item_key] = {
-            "detected": detected,
-            "name": item_info["name"],
-            "confidence": round(rng.uniform(0.65, 0.95), 2) if detected else 0.0,
-            "quality": quality if detected else "unknown",
-            "quality_label": (
-                item_info["fresh_label"] if acceptable else item_info["bad_label"]
-            ) if detected else "Belum Terdeteksi",
-            "acceptable": acceptable,
-            "detected_class": (
-                item_info["fresh_class"] if acceptable else item_info["bad_class"]
-            ) if detected else None
-        }
-
-    return build_detection_response(detections, "dummy")
-
-
 def yolo_error_response(message):
-    """Return an honest empty result when an available YOLO model cannot run."""
+    """Return an empty result when YOLO cannot run."""
     return {
         **build_detection_response(build_empty_detections(), "yolo-error"),
         "message": message
@@ -1036,7 +999,7 @@ def build_yolo_input_paths(image_path):
 def detect_menu(image_path):
     """
     Menu detection for food items.
-    Uses custom YOLO when models/best.pt exists, otherwise uses safe dummy data.
+    Requires the custom YOLO model at models/best.pt.
     
     Args:
         image_path: Path to the captured image
@@ -1059,8 +1022,10 @@ def detect_menu(image_path):
 
         if not CUSTOM_MODEL_PATH.exists() or CUSTOM_MODEL_PATH.stat().st_size == 0:
             LAST_YOLO_ERROR = f"Model not found: {CUSTOM_MODEL_PATH}"
-            print("YOLO model not found, using dummy detection")
-            return dummy_detect_menu(image_path)
+            print(f"YOLO model not found: {CUSTOM_MODEL_PATH}")
+            return yolo_error_response(
+                "Model YOLO models/best.pt tidak ditemukan atau file kosong."
+            )
 
         try:
             from ultralytics import YOLO
@@ -1122,7 +1087,6 @@ def detect_menu(image_path):
         
         # Process results
         detections = {}
-        detected_items = set()
         
         for result in results:
             if result.boxes is not None:
@@ -1163,7 +1127,6 @@ def detect_menu(image_path):
                         if confidence <= current_confidence:
                             continue
 
-                        detected_items.add(menu_item)
                         detections[menu_item] = {
                             "detected": True,
                             "name": MENU_ITEMS[menu_item]["name"],
@@ -1184,7 +1147,9 @@ def detect_menu(image_path):
             return yolo_error_response(
                 "Model YOLO tersedia, tetapi gagal menjalankan deteksi. Cek log server."
             )
-        return dummy_detect_menu(image_path)
+        return yolo_error_response(
+            "Model YOLO models/best.pt tidak ditemukan atau file kosong."
+        )
 
 
 def save_to_supabase(image_url, menu_status, detections):
@@ -1211,50 +1176,6 @@ def save_to_supabase(image_url, menu_status, detections):
     except Exception as e:
         print(f"Error saving to Supabase: {e}")
         return None
-
-
-def normalize_field_text(value, max_length=500):
-    text = str(value or "").strip()
-    if len(text) > max_length:
-        return text[:max_length]
-    return text
-
-
-def build_field_monitoring_record(form_data, image_url=None):
-    stage = normalize_field_text(form_data.get("stage"), 8).upper()
-    if stage not in FIELD_STAGES:
-        stage = "T1"
-
-    latest_sensor = freshest_sensor_data(
-        ("local", LATEST_SENSOR_DATA),
-        ("local-history", LOCAL_SENSOR_HISTORY[0] if LOCAL_SENSOR_HISTORY else None)
-    )
-
-    try:
-        duration_minutes = int(float(form_data.get("duration_minutes"))) if form_data.get("duration_minutes") else None
-    except (TypeError, ValueError):
-        duration_minutes = None
-
-    now_iso = datetime.now(UTC).isoformat()
-    return {
-        "id": uuid.uuid4().hex,
-        "stage": stage,
-        "stage_label": FIELD_STAGES[stage],
-        "location_name": normalize_field_text(form_data.get("location_name"), 120),
-        "actual_menu": normalize_field_text(form_data.get("actual_menu"), 220),
-        "process_time": normalize_field_text(form_data.get("process_time"), 80),
-        "duration_minutes": duration_minutes,
-        "interview_notes": normalize_field_text(form_data.get("interview_notes"), 1000),
-        "image_url": image_url,
-        "temperature": latest_sensor.get("temperature"),
-        "humidity": latest_sensor.get("humidity"),
-        "gas_status": latest_sensor.get("gas_status"),
-        "gas_value": latest_sensor.get("gas_value"),
-        "sensor_created_at": latest_sensor.get("created_at"),
-        "sensor_age_seconds": latest_sensor.get("age_seconds"),
-        "sensor_connection_status": latest_sensor.get("connection_status"),
-        "created_at": now_iso,
-    }
 
 
 # Routes
@@ -1657,63 +1578,6 @@ def api_history():
             "message": "Supabase fetch failed, returning local history",
             "data": LOCAL_DETECTION_HISTORY[:5]
         }), 200
-
-
-@app.route("/api/field-monitoring", methods=["POST"])
-def api_field_monitoring():
-    """Save a field monitoring checkpoint for temporary SPPG/MBG data collection."""
-    try:
-        image_url = None
-        image_file = request.files.get("image")
-
-        if image_file and image_file.filename:
-            filename = f"field_{uuid.uuid4().hex}.jpg"
-            image_path = CAPTURES_DIR / filename
-            image_file.save(str(image_path))
-            local_image_url = f"/static/captures/{filename}"
-            image_url = upload_capture_to_supabase(image_path, filename) or local_image_url
-
-        record = build_field_monitoring_record(request.form, image_url=image_url)
-        LOCAL_FIELD_MONITORING_HISTORY.insert(0, record)
-        del LOCAL_FIELD_MONITORING_HISTORY[20:]
-
-        supabase_saved = False
-        if has_supabase_config():
-            supabase_record = {key: value for key, value in record.items() if key != "id"}
-            supabase_saved = insert_supabase_row("field_monitoring_logs", supabase_record) is not None
-
-        if has_supabase_config() and not supabase_saved:
-            return jsonify({
-                "status": "warning",
-                "message": "Data tersimpan lokal, tetapi belum masuk Supabase. Cek env, RLS, atau log server.",
-                "data": record
-            }), 200
-
-        return jsonify({
-            "status": "success",
-            "message": "Data monitoring lapangan tersimpan",
-            "data": record
-        }), 201
-    except Exception as e:
-        print(f"Error saving field monitoring data: {e}")
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route("/api/field-monitoring/history", methods=["GET"])
-def api_field_monitoring_history():
-    """Return recent field monitoring checkpoints."""
-    limit = request.args.get("limit", default=5, type=int)
-    limit = max(1, min(limit, 20))
-
-    if has_supabase_config():
-        data = select_supabase_latest("field_monitoring_logs", limit=limit)
-        if data is not None:
-            return jsonify({"status": "success", "data": data if data else []}), 200
-
-    return jsonify({
-        "status": "success",
-        "data": LOCAL_FIELD_MONITORING_HISTORY[:limit]
-    }), 200
 
 
 @app.route("/api/status", methods=["GET"])

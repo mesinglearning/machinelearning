@@ -425,10 +425,6 @@ class MenuDetector {
         });
     }
 
-    clamp(value, min, max) {
-        return Math.min(Math.max(value, min), max);
-    }
-
     // ========================================================================
     // Display Results
     // ========================================================================
@@ -705,8 +701,8 @@ class MenuDetector {
     updateModelMode(modelMode) {
         const isYolo = modelMode === 'custom-yolo';
         const isYoloError = modelMode === 'yolo-error';
-        this.updateSummary(this.modelState, isYolo ? 'YOLO Aktif' : (isYoloError ? 'YOLO Error' : 'Demo Mode'));
-        this.updateSummary(this.modelMeta, isYolo ? 'models/best.pt digunakan' : (isYoloError ? 'Cek log server' : 'Dummy fallback aktif'));
+        this.updateSummary(this.modelState, isYolo ? 'YOLO Aktif' : (isYoloError ? 'YOLO Error' : 'Model tidak dikenal'));
+        this.updateSummary(this.modelMeta, isYolo ? 'models/best.pt digunakan' : 'Cek model dan log server');
     }
 
     updateDeviceStatus(data) {
@@ -725,7 +721,6 @@ class MenuDetector {
     formatModelName(modelMode) {
         if (modelMode === 'custom-yolo') return 'Custom YOLO';
         if (modelMode === 'yolo-error') return 'YOLO error';
-        if (modelMode === 'dummy') return 'Dummy fallback';
         return modelMode || 'Unknown';
     }
 
@@ -923,64 +918,6 @@ class MenuDetector {
             <circle cx="${last.x.toFixed(1)}" cy="${last.y.toFixed(1)}" r="6" fill="${color}" opacity="0.18"></circle>
             <text x="${width - 18}" y="24" text-anchor="end" class="chart-current">${this.escapeHtml(currentValue)}</text>
         `;
-    }
-
-    async loadFieldMonitoringHistory() {
-        if (!this.fieldLatest) return;
-
-        try {
-            const response = await fetch('/api/field-monitoring/history?limit=3');
-            const result = await response.json();
-            if (result.status === 'success' && result.data?.length) {
-                this.renderFieldLatest(result.data);
-            }
-        } catch (error) {
-            console.error('Error loading field monitoring history:', error);
-        }
-    }
-
-    renderFieldLatest(records) {
-        if (!this.fieldLatest) return;
-
-        if (!records || records.length === 0) {
-            this.fieldLatest.innerHTML = '<p class="no-data">Belum ada data lapangan tersimpan.</p>';
-            return;
-        }
-
-        this.fieldLatest.innerHTML = records.map(record => {
-            const createdAt = record.created_at
-                ? new Date(record.created_at).toLocaleString('id-ID')
-                : '--';
-            const temperature = record.temperature !== null && record.temperature !== undefined
-                ? `${Number(record.temperature).toFixed(1)}°C`
-                : '--';
-            const humidity = record.humidity !== null && record.humidity !== undefined
-                ? `${Number(record.humidity).toFixed(1)}%`
-                : '--';
-            const gasValue = record.gas_value !== null && record.gas_value !== undefined
-                ? Number(record.gas_value).toFixed(0)
-                : '--';
-            const imageLink = record.image_url
-                ? `<a href="${this.escapeHtml(record.image_url)}" target="_blank" rel="noopener">Foto</a>`
-                : '<span>Tidak ada foto</span>';
-
-            return `
-                <div class="field-record">
-                    <div>
-                        <strong>${this.escapeHtml(record.stage || '--')} - ${this.escapeHtml(record.stage_label || '')}</strong>
-                        <span>${this.escapeHtml(createdAt)}</span>
-                    </div>
-                    <div class="field-record-grid">
-                        <span>Gas: <strong>${this.escapeHtml(gasValue)}</strong></span>
-                        <span>Status: <strong>${this.escapeHtml(record.gas_status || '--')}</strong></span>
-                        <span>Suhu: <strong>${this.escapeHtml(temperature)}</strong></span>
-                        <span>Kelembapan: <strong>${this.escapeHtml(humidity)}</strong></span>
-                        <span>Lokasi: <strong>${this.escapeHtml(record.location_name || '--')}</strong></span>
-                        ${imageLink}
-                    </div>
-                </div>
-            `;
-        }).join('');
     }
 
     // ========================================================================
