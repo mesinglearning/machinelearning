@@ -245,16 +245,6 @@ FRESHNESS_THRESHOLDS = {
     },
 }
 
-# Bobot per faktor untuk menghitung Freshness Score.
-# Gas diberi bobot paling besar karena bau/gas pembusukan cukup penting
-# untuk menentukan kelayakan makanan.
-FRESHNESS_WEIGHTS = {
-    "temperature": 0.35,
-    "humidity": 0.25,
-    "gas": 0.40,
-}
-
-
 def parse_iso_datetime(value):
     """Mengubah teks waktu ISO dari Supabase/Flask menjadi objek datetime."""
     if not value:
@@ -412,8 +402,7 @@ GAS_SPOILAGE_KEYWORDS = (
     "busuk",
     "bahaya",
     "danger",
-    "warning",
-    "waspada"
+    "tidak layak"
 )
 
 
@@ -422,6 +411,13 @@ def sensor_indicates_spoilage(sensor_data):
     enriched = enrich_sensor_data(sensor_data, sensor_data.get("source", "local"))
     if enriched.get("is_stale"):
         return False
+
+    try:
+        gas_value = enriched.get("gas_value")
+        if gas_value is not None and float(gas_value) >= GAS_DANGER_ADC:
+            return True
+    except (TypeError, ValueError):
+        pass
 
     gas_status = str(enriched.get("gas_status") or "").lower()
     if "warming" in gas_status:
@@ -562,7 +558,7 @@ def format_remaining_time_message(hours):
 
 
 def calculate_item_freshness(item_key, detection, sensor_data):
-    """Menghitung Freshness Score dan estimasi waktu untuk satu jenis makanan."""
+    """Menghitung Freshness Score berdasarkan YOLO, lalu dikoreksi oleh MQ135."""
     threshold = FRESHNESS_THRESHOLDS[item_key]
     temperature = sensor_data.get("temperature")
     humidity = sensor_data.get("humidity")
@@ -591,70 +587,43 @@ def calculate_item_freshness(item_key, detection, sensor_data):
         "humidity": humidity_score,
         "gas": gas_score,
     }
-    available_scores = {
-        key: value
-        for key, value in component_scores.items()
-        if value is not None
-    }
 
-    if not available_scores:
-        weighted_score = 0
+    # Dasar prediksi mengikuti hasil visual YOLO.
+    # Jika YOLO mendeteksi makanan masih layak, sistem menganggap makanan layak
+    # sampai sensor MQ135 menunjukkan indikasi bau.
+    if detection.get("detected") and detection.get("acceptable"):
+        score = 88
+    elif detection.get("detected"):
+        score = 20
     else:
-        used_weight = sum(FRESHNESS_WEIGHTS[key] for key in available_scores.keys())
-        weighted_score = sum(
-            available_scores[key] * FRESHNESS_WEIGHTS[key]
-            for key in available_scores.keys()
-        ) / used_weight
+        score = 0
 
-    visual_penalty = 0
-    if detection.get("detected") and not detection.get("acceptable"):
-        visual_penalty = 35
-
-    score = clamp_number(round(weighted_score - visual_penalty, 1))
-
+    # Ambang gas mengikuti hasil praktik:
+    # 300 ADC = mulai terbiar 1-2 jam, 350 ADC = mulai bau, 400 ADC = bau kuat.
     emergency = False
+    numeric_gas = None
     try:
-        emergency = gas_value is not None and float(gas_value) >= GAS_DANGER_ADC
+        numeric_gas = float(gas_value) if gas_value is not None else None
+        emergency = numeric_gas is not None and numeric_gas >= GAS_DANGER_ADC
     except (TypeError, ValueError):
         emergency = False
 
-    if sensor_indicates_spoilage(sensor_data):
-        score = min(score, 24)
-    elif gas_value is not None:
-        try:
-            numeric_gas = float(gas_value)
-            if numeric_gas >= GAS_WARNING_ADC:
-                score = min(score, 60)
-            elif numeric_gas >= GAS_BASELINE_ADC:
-                score = min(score, 78)
-        except (TypeError, ValueError):
-            pass
-
     if emergency:
         score = 0
-
-    temp_factor = 1
-    try:
-        if temperature is not None:
-            temp_factor = 0.5 ** max(0, (float(temperature) - threshold["temperature_ideal"]) / 10)
-    except (TypeError, ValueError):
-        temp_factor = 1
-
-    humidity_factor = 1
-    try:
-        if humidity is not None and float(humidity) > threshold["humidity_ideal"]:
-            humidity_range = max(1, threshold["humidity_max"] - threshold["humidity_ideal"])
-            humidity_ratio = (float(humidity) - threshold["humidity_ideal"]) / humidity_range
-            humidity_factor = clamp_number(1 - (humidity_ratio * 0.55), 0.15, 1)
-    except (TypeError, ValueError):
-        humidity_factor = 1
+    elif numeric_gas is not None and numeric_gas >= GAS_WARNING_ADC:
+        score = min(score, 60)
+    elif numeric_gas is not None and numeric_gas >= GAS_BASELINE_ADC:
+        score = min(score, 78)
 
     if gas_exposure_hours is None:
         remaining_base_hours = threshold["base_hours"]
     else:
         remaining_base_hours = max(0, GAS_DANGER_EXPOSURE_HOURS - gas_exposure_hours)
 
-    remaining_hours = round(remaining_base_hours * temp_factor * humidity_factor, 2)
+    if detection.get("detected") and not detection.get("acceptable"):
+        remaining_hours = 0
+    else:
+        remaining_hours = round(remaining_base_hours, 2)
 
     status = freshness_status(score, emergency=emergency)
     return {
