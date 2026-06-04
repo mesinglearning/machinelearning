@@ -197,6 +197,8 @@ GAS_BASELINE_ADC = 300
 GAS_WARNING_ADC = 350
 GAS_DANGER_ADC = 400
 GAS_DANGER_EXPOSURE_HOURS = 10
+YOLO_FRESHNESS_WEIGHT = 0.70
+IOT_FRESHNESS_WEIGHT = 0.30
 
 FRESHNESS_THRESHOLDS = {
     "rice": {
@@ -558,11 +560,17 @@ def format_remaining_time_message(hours):
 
 
 def calculate_item_freshness(item_key, detection, sensor_data):
-    """Menghitung Freshness Score berdasarkan YOLO, lalu dikoreksi oleh MQ135."""
+    """Menghitung Freshness Score dengan bobot YOLO lebih besar dari IoT."""
     threshold = FRESHNESS_THRESHOLDS[item_key]
     temperature = sensor_data.get("temperature")
     humidity = sensor_data.get("humidity")
     gas_value = sensor_data.get("gas_value")
+    confidence = detection.get("confidence", 0)
+
+    try:
+        confidence_score = clamp_number(float(confidence) * 100)
+    except (TypeError, ValueError):
+        confidence_score = 0
 
     temp_score = score_against_threshold(
         temperature,
@@ -588,15 +596,32 @@ def calculate_item_freshness(item_key, detection, sensor_data):
         "gas": gas_score,
     }
 
-    # Dasar prediksi mengikuti hasil visual YOLO.
-    # Jika YOLO mendeteksi makanan masih layak, sistem menganggap makanan layak
-    # sampai sensor MQ135 menunjukkan indikasi bau.
+    available_iot_scores = [
+        value
+        for value in (temp_score, humidity_score, gas_score)
+        if value is not None
+    ]
+    iot_score = (
+        sum(available_iot_scores) / len(available_iot_scores)
+        if available_iot_scores
+        else 100
+    )
+
+    # Skor visual dari YOLO menjadi faktor utama.
+    # Jika YOLO menyatakan makanan layak, skor visual dibuat tinggi.
+    # Jika YOLO menyatakan tidak layak, skor visual dibuat rendah.
     if detection.get("detected") and detection.get("acceptable"):
-        score = 88
+        yolo_score = max(88, confidence_score)
     elif detection.get("detected"):
-        score = 20
+        yolo_score = min(25, confidence_score)
     else:
-        score = 0
+        yolo_score = 0
+
+    score = round(
+        (yolo_score * YOLO_FRESHNESS_WEIGHT)
+        + (iot_score * IOT_FRESHNESS_WEIGHT),
+        1
+    )
 
     # Ambang gas mengikuti hasil praktik:
     # 300 ADC = mulai terbiar 1-2 jam, 350 ADC = mulai bau, 400 ADC = bau kuat.
@@ -611,9 +636,9 @@ def calculate_item_freshness(item_key, detection, sensor_data):
     if emergency:
         score = 0
     elif numeric_gas is not None and numeric_gas >= GAS_WARNING_ADC:
-        score = min(score, 60)
+        score = min(score, 74)
     elif numeric_gas is not None and numeric_gas >= GAS_BASELINE_ADC:
-        score = min(score, 78)
+        score = min(score, 84)
 
     if gas_exposure_hours is None:
         remaining_base_hours = threshold["base_hours"]
@@ -637,6 +662,12 @@ def calculate_item_freshness(item_key, detection, sensor_data):
         "time_message": format_remaining_time_message(remaining_hours),
         "threshold": threshold,
         "component_scores": component_scores,
+        "yolo_score": round(yolo_score, 1),
+        "iot_score": round(iot_score, 1),
+        "score_weights": {
+            "yolo": YOLO_FRESHNESS_WEIGHT,
+            "iot": IOT_FRESHNESS_WEIGHT,
+        },
         "estimated_exposure_hours": gas_exposure_hours,
         "detected_quality": detection.get("quality_label"),
         "visual_acceptable": detection.get("acceptable"),
