@@ -13,14 +13,16 @@ from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from PIL import Image, ImageEnhance, ImageOps
 
-# Load environment variables
+# Membaca konfigurasi dari file .env, misalnya URL dan API key Supabase.
 load_dotenv()
 
-# Initialize Flask app
+# Membuat aplikasi Flask sebagai backend utama dan mengaktifkan CORS
+# agar endpoint API bisa diakses dari dashboard web.
 app = Flask(__name__)
 CORS(app)
 
-# Supabase Configuration - Lazy load to avoid import issues
+# Konfigurasi Supabase.
+# Nilai ini diambil dari .env agar data rahasia tidak ditulis langsung di kode.
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "captures")
@@ -28,7 +30,7 @@ HAS_SUPABASE = False
 SUPABASE_CLIENT_TRIED = False
 
 def get_supabase_client():
-    """Lazy load Supabase client"""
+    """Membuat koneksi Supabase saat benar-benar dibutuhkan."""
     global supabase, HAS_SUPABASE, SUPABASE_CLIENT_TRIED
     
     if supabase is not None or SUPABASE_CLIENT_TRIED or not SUPABASE_URL or not SUPABASE_KEY:
@@ -51,11 +53,12 @@ supabase = None
 
 
 def has_supabase_config():
+    """Mengecek apakah konfigurasi Supabase sudah tersedia."""
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
 
 def upload_capture_to_supabase(image_path, filename):
-    """Upload a captured image to Supabase Storage and return its public URL."""
+    """Mengunggah gambar capture ke Supabase Storage dan mengembalikan URL publik."""
     if not has_supabase_config():
         return None
 
@@ -90,7 +93,7 @@ def upload_capture_to_supabase(image_path, filename):
 
 
 def supabase_rest_request(table, method="GET", params=None, data=None, prefer=None):
-    """Call Supabase REST API directly when the Python client is unavailable."""
+    """Mengakses Supabase REST API sebagai cadangan jika client Python gagal."""
     if not has_supabase_config():
         return None
 
@@ -126,6 +129,7 @@ def supabase_rest_request(table, method="GET", params=None, data=None, prefer=No
 
 
 def insert_supabase_row(table, data):
+    """Menyimpan satu baris data ke tabel Supabase."""
     supabase_client = get_supabase_client()
     if supabase_client:
         try:
@@ -147,6 +151,7 @@ def insert_supabase_row(table, data):
 
 
 def select_supabase_latest(table, limit=1):
+    """Mengambil data terbaru dari tabel Supabase berdasarkan created_at."""
     supabase_client = get_supabase_client()
     if supabase_client:
         try:
@@ -164,7 +169,7 @@ def select_supabase_latest(table, limit=1):
     )
 
 
-# Configuration
+# Konfigurasi folder, model YOLO, cache lokal, dan data sensor terbaru.
 CAPTURES_DIR = Path("static/captures")
 CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 CUSTOM_MODEL_PATH = Path("models/best.pt")
@@ -188,6 +193,10 @@ CAPTURE_REQUEST_STATE = {
     "id": None,
     "requested_at": None
 }
+GAS_BASELINE_ADC = 300
+GAS_WARNING_ADC = 350
+GAS_DANGER_ADC = 400
+GAS_DANGER_EXPOSURE_HOURS = 10
 
 FRESHNESS_THRESHOLDS = {
     "rice": {
@@ -195,9 +204,10 @@ FRESHNESS_THRESHOLDS = {
         "temperature_ideal": 25,
         "humidity_max": 80,
         "humidity_ideal": 60,
-        "gas_max": 200,
-        "gas_raw_ideal": 360,
-        "gas_raw_max": 430,
+        "gas_max": GAS_BASELINE_ADC,
+        "gas_raw_ideal": GAS_BASELINE_ADC,
+        "gas_raw_warning": GAS_WARNING_ADC,
+        "gas_raw_max": GAS_DANGER_ADC,
         "base_hours": 4,
     },
     "fried_chicken": {
@@ -205,9 +215,10 @@ FRESHNESS_THRESHOLDS = {
         "temperature_ideal": 25,
         "humidity_max": 75,
         "humidity_ideal": 60,
-        "gas_max": 300,
-        "gas_raw_ideal": 360,
-        "gas_raw_max": 450,
+        "gas_max": GAS_BASELINE_ADC,
+        "gas_raw_ideal": GAS_BASELINE_ADC,
+        "gas_raw_warning": GAS_WARNING_ADC,
+        "gas_raw_max": GAS_DANGER_ADC,
         "base_hours": 3,
     },
     "broccoli": {
@@ -215,9 +226,10 @@ FRESHNESS_THRESHOLDS = {
         "temperature_ideal": 24,
         "humidity_max": 85,
         "humidity_ideal": 70,
-        "gas_max": 150,
-        "gas_raw_ideal": 360,
-        "gas_raw_max": 420,
+        "gas_max": GAS_BASELINE_ADC,
+        "gas_raw_ideal": GAS_BASELINE_ADC,
+        "gas_raw_warning": GAS_WARNING_ADC,
+        "gas_raw_max": GAS_DANGER_ADC,
         "base_hours": 5,
     },
     "apple": {
@@ -225,13 +237,17 @@ FRESHNESS_THRESHOLDS = {
         "temperature_ideal": 22,
         "humidity_max": 70,
         "humidity_ideal": 55,
-        "gas_max": 100,
-        "gas_raw_ideal": 360,
-        "gas_raw_max": 410,
+        "gas_max": GAS_BASELINE_ADC,
+        "gas_raw_ideal": GAS_BASELINE_ADC,
+        "gas_raw_warning": GAS_WARNING_ADC,
+        "gas_raw_max": GAS_DANGER_ADC,
         "base_hours": 8,
     },
 }
 
+# Bobot per faktor untuk menghitung Freshness Score.
+# Gas diberi bobot paling besar karena bau/gas pembusukan cukup penting
+# untuk menentukan kelayakan makanan.
 FRESHNESS_WEIGHTS = {
     "temperature": 0.35,
     "humidity": 0.25,
@@ -240,6 +256,7 @@ FRESHNESS_WEIGHTS = {
 
 
 def parse_iso_datetime(value):
+    """Mengubah teks waktu ISO dari Supabase/Flask menjadi objek datetime."""
     if not value:
         return None
 
@@ -250,10 +267,12 @@ def parse_iso_datetime(value):
 
 
 def sensor_timestamp(data):
+    """Mengambil timestamp created_at dari data sensor."""
     return parse_iso_datetime((data or {}).get("created_at"))
 
 
 def enrich_sensor_data(data, source="local"):
+    """Melengkapi data sensor dengan umur data dan status koneksi."""
     sensor_data = dict(data or {})
     sensor_data.setdefault("temperature", None)
     sensor_data.setdefault("humidity", None)
@@ -278,6 +297,7 @@ def enrich_sensor_data(data, source="local"):
 
 
 def freshest_sensor_data(*sensor_sources):
+    """Memilih data sensor yang paling baru dari beberapa sumber."""
     available = [
         (source, data)
         for source, data in sensor_sources
@@ -292,7 +312,7 @@ def freshest_sensor_data(*sensor_sources):
 
 
 def latest_sensor_for_prediction():
-    """Return the freshest sensor data from local memory or Supabase."""
+    """Mengambil data sensor terbaru untuk digunakan pada prediksi kesegaran."""
     sources = [
         (LATEST_SENSOR_DATA.get("source", "local"), LATEST_SENSOR_DATA),
         ("local-history", LOCAL_SENSOR_HISTORY[0] if LOCAL_SENSOR_HISTORY else None),
@@ -318,7 +338,7 @@ def latest_sensor_for_prediction():
 
     return freshest_sensor_data(*sources)
 
-# Menu components
+# Daftar menu yang menjadi target deteksi YOLO.
 MENU_ITEMS = {
     "rice": {
         "id": 1,
@@ -354,6 +374,7 @@ MENU_ITEMS = {
     }
 }
 
+# Mapping kelas YOLO ke item menu dan status kualitasnya.
 QUALITY_CLASSES = {
     item_info["fresh_class"]: {
         "item_key": item_key,
@@ -373,6 +394,7 @@ QUALITY_CLASSES.update({
     for item_key, item_info in MENU_ITEMS.items()
 })
 
+# Batas minimal confidence tiap kelas agar deteksi YOLO yang terlalu lemah diabaikan.
 MIN_CONFIDENCE_BY_CLASS = {
     "fresh_rice": 0.25,
     "stale_rice": 0.32,
@@ -396,7 +418,7 @@ GAS_SPOILAGE_KEYWORDS = (
 
 
 def sensor_indicates_spoilage(sensor_data):
-    """Return True when recent MQ135 status indicates spoiled-food odor."""
+    """Mengembalikan True jika sensor MQ135 mendeteksi indikasi bau busuk."""
     enriched = enrich_sensor_data(sensor_data, sensor_data.get("source", "local"))
     if enriched.get("is_stale"):
         return False
@@ -409,10 +431,12 @@ def sensor_indicates_spoilage(sensor_data):
 
 
 def clamp_number(value, minimum=0, maximum=100):
+    """Membatasi angka agar tetap berada pada rentang minimum dan maksimum."""
     return max(minimum, min(maximum, value))
 
 
 def score_against_threshold(value, ideal, maximum):
+    """Menghitung skor 0-100 berdasarkan nilai ideal dan batas maksimum."""
     if value is None:
         return None
 
@@ -430,7 +454,8 @@ def score_against_threshold(value, ideal, maximum):
     return clamp_number(((maximum - numeric_value) / usable_range) * 100)
 
 
-def score_gas_value(value, maximum, raw_ideal=None, raw_max=None):
+def score_gas_value(value, maximum=None, raw_ideal=None, raw_max=None):
+    """Menghitung skor gas dari MQ135 berdasarkan ambang hasil praktik."""
     if value is None:
         return None
 
@@ -439,18 +464,46 @@ def score_gas_value(value, maximum, raw_ideal=None, raw_max=None):
     except (TypeError, ValueError):
         return None
 
-    if raw_ideal is not None and raw_max is not None and numeric_value > maximum:
-        return score_against_threshold(numeric_value, raw_ideal, raw_max)
-
-    if numeric_value <= 0:
+    if numeric_value <= GAS_BASELINE_ADC:
         return 100
-    if numeric_value >= maximum:
+    if numeric_value >= GAS_DANGER_ADC:
         return 0
 
-    return clamp_number((1 - (numeric_value / maximum)) * 100)
+    if numeric_value <= GAS_WARNING_ADC:
+        progress = (numeric_value - GAS_BASELINE_ADC) / (GAS_WARNING_ADC - GAS_BASELINE_ADC)
+        return clamp_number(100 - (progress * 40))
+
+    progress = (numeric_value - GAS_WARNING_ADC) / (GAS_DANGER_ADC - GAS_WARNING_ADC)
+    return clamp_number(60 - (progress * 45))
+
+
+def estimate_gas_exposure_hours(value):
+    """Memperkirakan lama makanan terbiar berdasarkan nilai MQ135."""
+    if value is None:
+        return None
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return None
+
+    if numeric_value <= 0:
+        return 0
+    if numeric_value <= GAS_BASELINE_ADC:
+        return round((numeric_value / GAS_BASELINE_ADC) * 1.5, 2)
+    if numeric_value <= GAS_WARNING_ADC:
+        progress = (numeric_value - GAS_BASELINE_ADC) / (GAS_WARNING_ADC - GAS_BASELINE_ADC)
+        return round(1.5 + (progress * 3.5), 2)
+    if numeric_value <= GAS_DANGER_ADC:
+        progress = (numeric_value - GAS_WARNING_ADC) / (GAS_DANGER_ADC - GAS_WARNING_ADC)
+        return round(5 + (progress * 5), 2)
+
+    extra_hours = (numeric_value - GAS_DANGER_ADC) / 20
+    return round(min(12, GAS_DANGER_EXPOSURE_HOURS + extra_hours), 2)
 
 
 def freshness_status(score, emergency=False):
+    """Menentukan label status kelayakan berdasarkan Freshness Score."""
     if emergency:
         return {
             "label": "BUSUK / JANGAN DIMAKAN",
@@ -485,6 +538,7 @@ def freshness_status(score, emergency=False):
 
 
 def format_remaining_time_message(hours):
+    """Mengubah sisa waktu dalam jam menjadi kalimat yang mudah dibaca."""
     try:
         numeric_hours = float(hours)
     except (TypeError, ValueError):
@@ -508,6 +562,7 @@ def format_remaining_time_message(hours):
 
 
 def calculate_item_freshness(item_key, detection, sensor_data):
+    """Menghitung Freshness Score dan estimasi waktu untuk satu jenis makanan."""
     threshold = FRESHNESS_THRESHOLDS[item_key]
     temperature = sensor_data.get("temperature")
     humidity = sensor_data.get("humidity")
@@ -529,6 +584,7 @@ def calculate_item_freshness(item_key, detection, sensor_data):
         threshold.get("gas_raw_ideal"),
         threshold.get("gas_raw_max")
     )
+    gas_exposure_hours = estimate_gas_exposure_hours(gas_value)
 
     component_scores = {
         "temperature": temp_score,
@@ -556,23 +612,23 @@ def calculate_item_freshness(item_key, detection, sensor_data):
 
     score = clamp_number(round(weighted_score - visual_penalty, 1))
 
-    gas_ratio = None
     emergency = False
     try:
-        if (
-            gas_value is not None
-            and threshold.get("gas_raw_max")
-            and float(gas_value) > threshold["gas_max"]
-        ):
-            gas_ratio = float(gas_value) / threshold["gas_raw_max"]
-        else:
-            gas_ratio = float(gas_value) / threshold["gas_max"] if gas_value is not None else None
-        emergency = gas_ratio is not None and gas_ratio >= 1.5
+        emergency = gas_value is not None and float(gas_value) >= GAS_DANGER_ADC
     except (TypeError, ValueError):
-        gas_ratio = None
+        emergency = False
 
     if sensor_indicates_spoilage(sensor_data):
         score = min(score, 24)
+    elif gas_value is not None:
+        try:
+            numeric_gas = float(gas_value)
+            if numeric_gas >= GAS_WARNING_ADC:
+                score = min(score, 60)
+            elif numeric_gas >= GAS_BASELINE_ADC:
+                score = min(score, 78)
+        except (TypeError, ValueError):
+            pass
 
     if emergency:
         score = 0
@@ -584,13 +640,6 @@ def calculate_item_freshness(item_key, detection, sensor_data):
     except (TypeError, ValueError):
         temp_factor = 1
 
-    if gas_ratio is None:
-        gas_factor = 1
-    elif gas_ratio >= 1.5:
-        gas_factor = 0
-    else:
-        gas_factor = clamp_number(1 - (gas_ratio ** 1.4), 0.05, 1)
-
     humidity_factor = 1
     try:
         if humidity is not None and float(humidity) > threshold["humidity_ideal"]:
@@ -600,10 +649,12 @@ def calculate_item_freshness(item_key, detection, sensor_data):
     except (TypeError, ValueError):
         humidity_factor = 1
 
-    remaining_hours = round(
-        threshold["base_hours"] * temp_factor * gas_factor * humidity_factor,
-        2
-    )
+    if gas_exposure_hours is None:
+        remaining_base_hours = threshold["base_hours"]
+    else:
+        remaining_base_hours = max(0, GAS_DANGER_EXPOSURE_HOURS - gas_exposure_hours)
+
+    remaining_hours = round(remaining_base_hours * temp_factor * humidity_factor, 2)
 
     status = freshness_status(score, emergency=emergency)
     return {
@@ -617,6 +668,7 @@ def calculate_item_freshness(item_key, detection, sensor_data):
         "time_message": format_remaining_time_message(remaining_hours),
         "threshold": threshold,
         "component_scores": component_scores,
+        "estimated_exposure_hours": gas_exposure_hours,
         "detected_quality": detection.get("quality_label"),
         "visual_acceptable": detection.get("acceptable"),
         "emergency_gas_trigger": emergency,
@@ -624,6 +676,7 @@ def calculate_item_freshness(item_key, detection, sensor_data):
 
 
 def calculate_freshness_prediction(detection_result, sensor_data):
+    """Menghitung prediksi kesegaran semua makanan yang terdeteksi."""
     enriched_sensor = enrich_sensor_data(sensor_data, sensor_data.get("source", "local"))
     detections = detection_result.get("detections", {})
     detected_items = [
@@ -708,8 +761,8 @@ def calculate_freshness_prediction(detection_result, sensor_data):
 
 def apply_sensor_quality_context(detection_result):
     """
-    Fuse visual detection with MQ135 odor status.
-    YOLO identifies visible food; MQ135 adds freshness/odor context.
+    Menggabungkan hasil deteksi visual YOLO dengan status bau dari MQ135.
+    YOLO mengenali makanan yang terlihat, sedangkan MQ135 menambah konteks bau.
     """
     if not sensor_indicates_spoilage(LATEST_SENSOR_DATA):
         detection_result["sensor_quality_warning"] = False
@@ -774,7 +827,7 @@ def apply_sensor_quality_context(detection_result):
 
 
 def build_empty_detections():
-    """Return the standard detection shape for all required menu items."""
+    """Membuat struktur hasil kosong untuk semua menu yang wajib dicek."""
     return {
         item_key: {
             "detected": False,
@@ -790,7 +843,7 @@ def build_empty_detections():
 
 
 def build_detection_response(detections, model_used):
-    """Normalize detection results and calculate menu completeness and quality."""
+    """Menormalkan hasil deteksi dan menghitung status kelengkapan menu."""
     for item_key, item_info in MENU_ITEMS.items():
         detections.setdefault(item_key, {
             "detected": False,
@@ -825,7 +878,7 @@ def build_detection_response(detections, model_used):
 
 
 def get_model_state():
-    """Return lightweight runtime status for the dashboard."""
+    """Mengirim status ringan model dan konfigurasi untuk dashboard."""
     model_exists = CUSTOM_MODEL_PATH.exists() and CUSTOM_MODEL_PATH.stat().st_size > 0
     try:
         import ultralytics  # noqa: F401
@@ -856,7 +909,7 @@ def get_model_state():
 
 
 def yolo_error_response(message):
-    """Return an empty result when YOLO cannot run."""
+    """Membuat respons kosong ketika YOLO tidak bisa dijalankan."""
     return {
         **build_detection_response(build_empty_detections(), "yolo-error"),
         "message": message
@@ -864,7 +917,7 @@ def yolo_error_response(message):
 
 
 def get_yolo_model():
-    """Load the custom YOLO model once and refresh it when the file changes."""
+    """Memuat model YOLO sekali saja dan memuat ulang jika file model berubah."""
     global YOLO_MODEL, YOLO_MODEL_MTIME
 
     model_mtime = CUSTOM_MODEL_PATH.stat().st_mtime
@@ -878,11 +931,12 @@ def get_yolo_model():
 
 
 def normalize_class_name(class_name):
+    """Menyeragamkan nama kelas YOLO agar mudah dicocokkan dengan mapping."""
     return class_name.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def apple_region_looks_fresh(image_path):
-    """Use a simple color sanity check to reduce false rotten-apple detections."""
+    """Cek warna sederhana untuk mengurangi salah deteksi apel busuk."""
     try:
         image = Image.open(image_path).convert("RGB")
         width, height = image.size
@@ -917,7 +971,7 @@ def apple_region_looks_fresh(image_path):
 
 
 def apply_visual_sanity_checks(detection_result, image_path):
-    """Correct obvious visual false positives without changing the YOLO model."""
+    """Mengoreksi false positive visual sederhana tanpa mengubah model YOLO."""
     apple = detection_result.get("detections", {}).get("apple")
     if not apple:
         return detection_result
@@ -944,7 +998,8 @@ def apply_visual_sanity_checks(detection_result, image_path):
 
 def build_yolo_input_paths(image_path):
     """
-    Return full-image and crop variants so small foods remain visible to YOLO.
+    Membuat beberapa versi gambar untuk YOLO.
+    Gambar penuh dan crop membantu makanan kecil tetap terbaca oleh model.
     """
     paths = [str(image_path)]
     temp_dir = None
@@ -998,19 +1053,19 @@ def build_yolo_input_paths(image_path):
 
 def detect_menu(image_path):
     """
-    Menu detection for food items.
-    Requires the custom YOLO model at models/best.pt.
+    Mendeteksi menu makanan dari gambar menggunakan model YOLO custom.
+    Model wajib tersedia di models/best.pt.
     
     Args:
-        image_path: Path to the captured image
+        image_path: lokasi file gambar yang akan dianalisis
         
     Returns:
-        dict: Detection results with detected items and confidence scores
+        dict: hasil deteksi makanan beserta confidence dan status kualitas
     """
     global LAST_YOLO_ERROR
 
     try:
-        # Verify image exists
+        # Pastikan file gambar benar-benar tersedia sebelum diproses.
         if not Path(image_path).exists():
             return {
                 "status": "error",
@@ -1036,8 +1091,7 @@ def detect_menu(image_path):
                 "Dependency YOLO gagal dimuat. Install requirements lalu restart server."
             )
         
-        # Map class names to visual quality classes
-        # This mapping can be customized based on YOLO model training
+        # Mapping nama kelas YOLO ke kelas kualitas visual yang dipakai sistem.
         class_mapping = {
             "fresh_rice": "fresh_rice",
             "nasi_segar": "fresh_rice",
@@ -1070,7 +1124,7 @@ def detect_menu(image_path):
         print("Using custom YOLO model")
         model = get_yolo_model()
         
-        # Run inference
+        # Jalankan inferensi YOLO pada gambar asli dan variasi preprocessing.
         input_paths, temp_dir = build_yolo_input_paths(image_path)
         try:
             results = model.predict(
@@ -1085,21 +1139,21 @@ def detect_menu(image_path):
             if temp_dir is not None:
                 temp_dir.cleanup()
         
-        # Process results
+        # Proses setiap bounding box hasil YOLO.
         detections = {}
         
         for result in results:
             if result.boxes is not None:
                 for box in result.boxes:
-                    # Get class name and confidence
+                    # Ambil ID kelas dan confidence dari output YOLO.
                     class_id = int(box.cls[0])
                     confidence = float(box.conf[0])
                     
-                    # Get class name from model
+                    # Ambil nama kelas berdasarkan ID kelas dari model.
                     class_name = model.names.get(class_id, "unknown")
                     normalized_class_name = normalize_class_name(class_name)
                     
-                    # Map to quality class
+                    # Cocokkan kelas YOLO dengan menu dan status kualitas.
                     quality_class = None
                     if normalized_class_name in QUALITY_CLASSES:
                         quality_class = normalized_class_name
@@ -1152,14 +1206,15 @@ def detect_menu(image_path):
         )
 
 
-def save_to_supabase(image_url, menu_status, detections):
+def save_to_supabase(image_url, menu_status, detections, freshness_prediction=None):
     """
-    Save detection results to Supabase detection_history table.
+    Menyimpan hasil deteksi ke tabel detection_history di Supabase.
     
     Args:
-        image_url: URL or path to the image
-        menu_status: "Menu Lengkap" or "Menu Belum Lengkap"
-        detections: dict with detection results
+        image_url: URL atau path gambar
+        menu_status: status menu hasil deteksi
+        detections: data hasil deteksi
+        freshness_prediction: data prediksi kesegaran jika kolom Supabase tersedia
     """
     if not has_supabase_config():
         return None
@@ -1171,27 +1226,35 @@ def save_to_supabase(image_url, menu_status, detections):
             "detections": detections,
             "created_at": datetime.now(UTC).isoformat()
         }
+        if freshness_prediction is not None:
+            data["freshness_prediction"] = freshness_prediction
         
+        response = insert_supabase_row("detection_history", data)
+        if response is not None or freshness_prediction is None:
+            return response
+
+        data.pop("freshness_prediction", None)
+        print("Retrying detection_history save without freshness_prediction field")
         return insert_supabase_row("detection_history", data)
     except Exception as e:
         print(f"Error saving to Supabase: {e}")
         return None
 
 
-# Routes
+# Daftar route/API Flask yang dipakai dashboard dan ESP32.
 
 @app.route("/")
 def index():
-    """Render main dashboard"""
+    """Menampilkan halaman utama dashboard."""
     return render_template("index.html")
 
 
 @app.route("/api/detect", methods=["POST"])
 def api_detect():
     """
-    Detect menu items from uploaded image.
+    Menerima gambar dari upload/webcam, menjalankan YOLO, dan menghitung prediksi.
     
-    Expected: FormData with 'image' field (JPEG/PNG)
+    Format input: FormData dengan field image berisi file JPEG/PNG.
     """
     try:
         if "image" not in request.files:
@@ -1202,11 +1265,11 @@ def api_detect():
         if image_file.filename == "":
             return jsonify({"status": "error", "message": "No image selected"}), 400
         
-        # Generate unique filename
+        # Buat nama file unik agar gambar capture tidak saling menimpa.
         filename = f"{uuid.uuid4().hex}.jpg"
         image_path = CAPTURES_DIR / filename
         
-        # Save image
+        # Simpan gambar ke folder static/captures.
         image_file.save(str(image_path))
         try:
             normalized_image = Image.open(image_path).convert("RGB")
@@ -1217,7 +1280,7 @@ def api_detect():
                 "status": "error",
                 "message": f"File gambar tidak valid: {image_error}"
             }), 400
-        # Run detection
+        # Jalankan deteksi YOLO dan koreksi kualitas berdasarkan sensor/visual.
         detection_result = detect_menu(str(image_path))
         detection_result = apply_visual_sanity_checks(
             detection_result,
@@ -1229,7 +1292,7 @@ def api_detect():
             latest_sensor_for_prediction()
         )
         
-        # Upload image to Supabase Storage when configured.
+        # Upload gambar ke Supabase Storage jika konfigurasi tersedia.
         local_image_url = f"/static/captures/{filename}"
         image_url = upload_capture_to_supabase(image_path, filename) or local_image_url
         menu_status = detection_result.get("menu_status", "Unknown")
@@ -1247,10 +1310,10 @@ def api_detect():
         LOCAL_DETECTION_HISTORY.insert(0, history_record)
         del LOCAL_DETECTION_HISTORY[5:]
 
-        # Save to Supabase (if configured)
-        save_to_supabase(image_url, menu_status, detections)
+        # Simpan history deteksi dan prediksi ke Supabase jika aktif.
+        save_to_supabase(image_url, menu_status, detections, freshness_prediction)
         
-        # Return result
+        # Kirim hasil akhir ke dashboard dalam format JSON.
         return jsonify({
             "status": "success",
             "image_url": image_url,
@@ -1271,7 +1334,7 @@ def api_detect():
 
 @app.route("/api/freshness-prediction", methods=["POST"])
 def api_freshness_prediction():
-    """Recalculate freshness for existing detections using the latest sensor data."""
+    """Menghitung ulang prediksi kesegaran memakai data sensor terbaru."""
     try:
         data = request.get_json(silent=True) or {}
         detections = data.get("detections")
@@ -1297,8 +1360,8 @@ def api_freshness_prediction():
 @app.route("/api/preview-detect", methods=["POST"])
 def api_preview_detect():
     """
-    Lightweight detection for a temporary full-image preview.
-    It does not save images, history, or Supabase records.
+    Deteksi ringan untuk fitur auto-capture.
+    Gambar preview tidak disimpan ke history atau Supabase.
     """
     temp_path = None
     try:
@@ -1340,9 +1403,9 @@ def api_preview_detect():
 @app.route("/api/sensor", methods=["POST"])
 def api_sensor():
     """
-    Receive sensor data from ESP32.
+    Menerima data sensor yang dikirim ESP32.
     
-    Expected JSON:
+    Format JSON yang diharapkan:
     {
         "temperature": 29.5,
         "humidity": 70,
@@ -1361,7 +1424,7 @@ def api_sensor():
         gas_value = data.get("gas_value")
         source = data.get("source", "esp32")
         
-        # Validation
+        # Validasi agar request benar-benar membawa nilai sensor.
         if temperature is None and humidity is None and gas_value is None:
             return jsonify({"status": "error", "message": "No sensor values provided"}), 400
         
@@ -1378,7 +1441,7 @@ def api_sensor():
         LOCAL_SENSOR_HISTORY.insert(0, sensor_data)
         del LOCAL_SENSOR_HISTORY[30:]
 
-        # Save to Supabase (if configured)
+        # Simpan data sensor ke Supabase jika konfigurasi tersedia.
         if has_supabase_config():
             try:
                 supabase_sensor_data = {
@@ -1411,7 +1474,7 @@ def api_sensor():
 @app.route("/api/sensor/latest", methods=["GET"])
 def api_sensor_latest():
     """
-    Get latest sensor data.
+    Mengambil data sensor terbaru untuk ditampilkan di dashboard.
     """
     if not has_supabase_config():
         return jsonify({
@@ -1479,7 +1542,7 @@ def api_sensor_latest():
 
 @app.route("/api/sensor/history", methods=["GET"])
 def api_sensor_history():
-    """Get recent sensor readings for dashboard trends."""
+    """Mengambil riwayat sensor untuk grafik tren di dashboard."""
     limit = request.args.get("limit", default=20, type=int)
     limit = max(1, min(limit, 50))
 
@@ -1548,7 +1611,7 @@ def api_sensor_history():
 @app.route("/api/history", methods=["GET"])
 def api_history():
     """
-    Get last 5 detection history records.
+    Mengambil 5 riwayat deteksi terbaru.
     """
     if not has_supabase_config():
         return jsonify({
@@ -1582,7 +1645,7 @@ def api_history():
 
 @app.route("/api/status", methods=["GET"])
 def api_status():
-    """Return dashboard runtime status."""
+    """Mengirim status runtime aplikasi, model YOLO, dan Supabase."""
     return jsonify({
         "status": "success",
         "data": get_model_state()
@@ -1592,8 +1655,8 @@ def api_status():
 @app.route("/api/capture-request", methods=["POST"])
 def api_capture_request():
     """
-    Receive a physical capture button trigger from ESP32.
-    The browser polls the latest trigger and runs webcam capture locally.
+    Menerima trigger tombol fisik dari ESP32.
+    Browser membaca trigger terbaru lalu menjalankan capture webcam.
     """
     requested_at = datetime.now(UTC).isoformat()
     CAPTURE_REQUEST_STATE.update({
@@ -1611,14 +1674,14 @@ def api_capture_request():
 
 @app.route("/api/capture-request/latest", methods=["GET"])
 def api_capture_request_latest():
-    """Return the latest physical capture button trigger."""
+    """Mengirim trigger tombol capture terbaru ke dashboard."""
     return jsonify({
         "status": "success",
         "data": CAPTURE_REQUEST_STATE
     }), 200
 
 
-# Error handlers
+# Handler error agar respons API tetap berbentuk JSON.
 @app.errorhandler(404)
 def not_found(error):
     return jsonify({"status": "error", "message": "Endpoint not found"}), 404
@@ -1630,6 +1693,7 @@ def server_error(error):
 
 
 if __name__ == "__main__":
+    # Mode ini dipakai saat aplikasi dijalankan lokal dengan perintah python app.py.
     print(f"Python executable: {sys.executable}")
     print(f"Python version: {sys.version.split()[0]}")
     app.run(debug=True, host="0.0.0.0", port=5000)

@@ -23,11 +23,12 @@ const char* CAPTURE_URL = "https://mbg-menu-detector-mesinglearning-production.u
 #define MQ135_PIN 34
 #define CAPTURE_BUTTON_PIN 27
 
-// MQ135 raw ADC thresholds after the 10k/20k voltage divider.
-// Initial calibration from spoiled rice/chicken test data around 371-450 ADC.
-// Recalibrate with your own normal-air and spoiled-food samples.
-const int GAS_WARNING_THRESHOLD = 400;
-const int GAS_DANGEROUS_THRESHOLD = 430;
+// Ambang MQ135 berdasarkan hasil praktik:
+// 300 ADC = makanan mulai terbiar sekitar 1-2 jam,
+// 350 ADC = makanan mulai rada bau,
+// 400 ADC = bau kuat dan makanan tidak layak.
+const int GAS_WARNING_THRESHOLD = 350;
+const int GAS_DANGEROUS_THRESHOLD = 400;
 const int GAS_SAMPLE_COUNT = 8;
 const int GAS_CONFIRM_READINGS = 2;
 
